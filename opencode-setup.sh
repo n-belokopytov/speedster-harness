@@ -36,6 +36,16 @@ print(json.dumps(sys.argv[1]))
 PY
 }
 
+validate_json_file() {
+  python3 - "$1" 2>/dev/null <<'PY'
+import json, sys
+try:
+    json.load(open(sys.argv[1]))
+except (ValueError, IOError):
+    sys.exit(1)
+PY
+}
+
 echo "==> Checking prerequisites"
 need_cmd curl
 need_cmd python3
@@ -104,8 +114,7 @@ if [[ -f "${OPENCODE_CONFIG_PATH}" ]]; then
   echo "==> Existing global config backed up to ${BACKUP_PATH}"
 fi
 
-MODEL_KEY_ESCAPED="$(json_escape "${VLLM_MODEL}")"
-MODEL_NAME_ESCAPED="$(json_escape "${VLLM_MODEL}")"
+VLLM_MODEL_ESCAPED="$(json_escape "${VLLM_MODEL}")"
 BASE_URL_ESCAPED="$(json_escape "${VLLM_BASE_URL}")"
 
 if [[ -n "${VLLM_API_KEY}" ]]; then
@@ -137,13 +146,13 @@ cat > "${TEMP_CONFIG}" <<EOF
         ${API_KEY_LINE}
       },
       "models": {
-        ${MODEL_KEY_ESCAPED}: {
-          "name": ${MODEL_NAME_ESCAPED}
+        ${VLLM_MODEL_ESCAPED}: {
+          "name": ${VLLM_MODEL_ESCAPED}
         }
       }
     }
   },
-  "model": "vllm/${MODEL_KEY_ESCAPED}",
+  "model": "vllm/${VLLM_MODEL_ESCAPED}",
   "permission": {
     "bash": "ask",
     "edit": "allow",
@@ -153,25 +162,12 @@ cat > "${TEMP_CONFIG}" <<EOF
 EOF
 
 mv "${TEMP_CONFIG}" "${OPENCODE_CONFIG_PATH}"
-rm -f "${TEMP_CONFIG}"
 trap - EXIT
 
-if ! python3 - <<'PY' "${OPENCODE_CONFIG_PATH}" 2>/dev/null; then
-import json, sys
-try:
-    json.load(open(sys.argv[1]))
-except (ValueError, IOError):
-    sys.exit(1)
-PY
+if ! validate_json_file "${OPENCODE_CONFIG_PATH}"; then
   echo "ERROR: generated config is invalid JSON" >&2
   if [[ -f "${BACKUP_PATH}" ]]; then
-    if python3 - <<'PY' "${BACKUP_PATH}" 2>/dev/null; then
-import json, sys
-try:
-    json.load(open(sys.argv[1]))
-except (ValueError, IOError):
-    sys.exit(1)
-PY
+    if validate_json_file "${BACKUP_PATH}"; then
       mv "${BACKUP_PATH}" "${OPENCODE_CONFIG_PATH}"
       echo "Restored backup to ${OPENCODE_CONFIG_PATH}" >&2
     else
