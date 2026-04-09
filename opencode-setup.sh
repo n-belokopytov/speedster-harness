@@ -1,48 +1,32 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
-# Usage:
-#   ./opencode-setup.sh <vllm_base_url>
+# Usage: ./opencode-setup.sh <vllm_base_url>
+# Example: ./opencode-setup.sh http://localhost:8000/v1
 #
-# Example:
-#   ./opencode-setup.sh http://192.168.178.185:8000/v1
-#
-# Optional environment variables:
+# Optional env vars:
 #   VLLM_API_KEY=your-key          # optional; default is empty = no Authorization header
-#   VLLM_MODEL=exact/model/id      # optional; auto-detected from /v1/models if omitted
+#   MODEL=exact/model/id           # optional; auto-detected from /v1/models if omitted
 #   AUTO_INSTALL_OPENCODE=1        # set to 0 to disable auto-install
 
 VLLM_BASE_URL="${1:?Usage: $0 <vllm_base_url>}"
 VLLM_API_KEY="${VLLM_API_KEY:-}"
 AUTO_INSTALL_OPENCODE="${AUTO_INSTALL_OPENCODE:-1}"
-VLLM_MODEL="${VLLM_MODEL:-}"
+MODEL="${MODEL:-}"
 
-# Global config path
+# Config path
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$XDG_CONFIG_HOME/opencode}"
 OPENCODE_CONFIG_PATH="${OPENCODE_CONFIG_PATH:-$OPENCODE_CONFIG_DIR/opencode.json}"
 
 need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "ERROR: required command not found: $1" >&2
-    exit 1
-  }
+  command -v "$1" >/dev/null 2>&1 || { echo "ERROR: required command not found: $1" >&2; exit 1; }
 }
 
 json_escape() {
-  python3 - <<'PY' "$1"
+  python3 - "$1" <<'PY'
 import json, sys
 print(json.dumps(sys.argv[1]))
-PY
-}
-
-validate_json_file() {
-  python3 - "$1" 2>/dev/null <<'PY'
-import json, sys
-try:
-    json.load(open(sys.argv[1]))
-except (ValueError, IOError):
-    sys.exit(1)
 PY
 }
 
@@ -50,90 +34,56 @@ echo "==> Checking prerequisites"
 need_cmd curl
 need_cmd python3
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq not found. Falling back to Python JSON parsing."
+# Validate URL scheme (only http/https)
+if echo "$VLLM_BASE_URL" | grep -qE "^(https?://)[a-zA-Z0-9][a-zA-Z0-9._:-]*:[0-9]+(/v[0-9]+)?$"; then
+  :
+elif echo "$VLLM_BASE_URL" | grep -qE "^[a-zA-Z0-9][a-zA-Z0-9._:-]+:[0-9]+$"; then
+  VLLM_BASE_URL="http://$VLLM_BASE_URL"
+else
+  echo "ERROR: invalid vLLM base URL. Expected: <scheme>://host:port" >&2
+  exit 1
 fi
 
-VALID_URL="^[a-zA-Z][a-zA-Z0-9+.-]*://[a-zA-Z0-9.-]+\:[0-9]+$"
-if ! echo "$VLLM_BASE_URL" | grep -qE "$VALID_URL"; then
-  VALID_URL_NO_SCHEME="^[a-zA-Z0-9.-]+\:[0-9]+$"
-  if echo "$VLLM_BASE_URL" | grep -qE "$VALID_URL_NO_SCHEME"; then
-    VLLM_BASE_URL="http://$VLLM_BASE_URL"
-  else
-    echo "ERROR: invalid vLLM base URL format. Expected: <scheme>://host:port (e.g., http://localhost:8000/v1)" >&2
-    exit 1
-  fi
-fi
-
-# Strip trailing slash
 VLLM_BASE_URL="${VLLM_BASE_URL%/}"
 
-printf '%s\n' "==> Checking vLLM endpoint: ${VLLM_BASE_URL}/models"
+echo "==> Checking vLLM endpoint: ${VLLM_BASE_URL}/models"
 
 CURL_ARGS=(-fsS)
-if [[ -n "$VLLM_API_KEY" ]]; then
-  CURL_ARGS+=(-H "Authorization: Bearer ${VLLM_API_KEY}")
-fi
+[[ -n "$VLLM_API_KEY" ]] && CURL_ARGS+=(-H "Authorization: Bearer ${VLLM_API_KEY}")
 
 MODELS_JSON="$(curl "${CURL_ARGS[@]}" "${VLLM_BASE_URL}/models")" || {
   echo "ERROR: could not reach vLLM at ${VLLM_BASE_URL}/models" >&2
-  echo "Check:"
-  echo "  - vLLM is running"
-  echo "  - base URL includes /v1"
-  echo "  - scheme is included or can be inferred"
-  echo "  - API key matches, if your server requires one"
+  echo "Check: vLLM is running, base URL includes /v1, scheme correct" >&2
   exit 1
 }
 
-if [[ -z "${VLLM_MODEL}" ]]; then
-  if command -v jq >/dev/null 2>&1; then
-    VLLM_MODEL="$(printf '%s' "$MODELS_JSON" | jq -r '.data[0].id // empty')"
-  else
-    VLLM_MODEL="$(python3 - <<'PY' "$MODELS_JSON"
-import json, sys
-doc = json.loads(sys.argv[1])
-data = doc.get("data", [])
-print(data[0]["id"] if data and "id" in data[0] else "")
-PY
-)"
-  fi
-fi
+# Auto-detect model if not specified
+[[ -z "${MODEL}" ]] && MODEL="$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data'][0]['id'])" <<< "$MODELS_JSON")"
 
-if [[ -z "${VLLM_MODEL}" ]]; then
-  echo "ERROR: could not determine model name from vLLM /models response" >&2
-  exit 1
-fi
+[[ -z "${MODEL}" ]] && { echo "ERROR: could not determine model name" >&2; exit 1; }
 
-printf '%s\n' "==> Found model: ${VLLM_MODEL}"
+echo "==> Found model: ${MODEL}"
 
+# Validate model name (alphanumeric, dash, underscore, slash, dot only)
+[[ ! "${MODEL}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_./-]*$ ]] && { echo "ERROR: invalid model name: ${MODEL}" >&2; exit 1; }
+
+# Create config directory with secure permissions
 mkdir -p "${OPENCODE_CONFIG_DIR}"
+chmod 700 "${OPENCODE_CONFIG_DIR}"
 
+# Backup existing config
 if [[ -f "${OPENCODE_CONFIG_PATH}" ]]; then
   BACKUP_PATH="${OPENCODE_CONFIG_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
   cp "${OPENCODE_CONFIG_PATH}" "${BACKUP_PATH}"
-  echo "==> Existing global config backed up to ${BACKUP_PATH}"
+  chmod 600 "${BACKUP_PATH}"
+  echo "==> Existing config backed up to ${BACKUP_PATH}"
 fi
 
-VLLM_MODEL_ESCAPED="$(json_escape "${VLLM_MODEL}")"
+# Generate config
+MODEL_ESCAPED="$(json_escape "${MODEL}")"
 BASE_URL_ESCAPED="$(json_escape "${VLLM_BASE_URL}")"
 
-if [[ -n "${VLLM_API_KEY}" ]]; then
-  API_KEY_LINE="\"apiKey\": $(json_escape "${VLLM_API_KEY}")"
-else
-  API_KEY_LINE="\"apiKey\": \"\""
-fi
-
-OPENCODE_CONFIG_DIR="$(cd "${OPENCODE_CONFIG_DIR}" 2>/dev/null && pwd)" || {
-  echo "ERROR: config directory does not exist: ${OPENCODE_CONFIG_DIR}" >&2
-  exit 1
-}
-umask 077
-TEMP_CONFIG="$(mktemp "${OPENCODE_CONFIG_DIR}/.opencode_config.XXXXXX")" || {
-  echo "ERROR: failed to create temp file" >&2
-  exit 1
-}
-trap 'rm -f "$TEMP_CONFIG"' EXIT
-
+TEMP_CONFIG="$(mktemp)"
 cat > "${TEMP_CONFIG}" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -142,17 +92,14 @@ cat > "${TEMP_CONFIG}" <<EOF
       "npm": "@ai-sdk/openai-compatible",
       "name": "vLLM (local)",
       "options": {
-        "baseURL": ${BASE_URL_ESCAPED},
-        ${API_KEY_LINE}
+        "baseURL": ${BASE_URL_ESCAPED}
       },
       "models": {
-        ${VLLM_MODEL_ESCAPED}: {
-          "name": ${VLLM_MODEL_ESCAPED}
-        }
+        ${MODEL_ESCAPED}: { "name": ${MODEL_ESCAPED} }
       }
     }
   },
-  "model": "vllm/${VLLM_MODEL_ESCAPED}",
+  "model": vllm/${MODEL_ESCAPED},
   "permission": {
     "bash": "ask",
     "edit": "allow",
@@ -161,49 +108,37 @@ cat > "${TEMP_CONFIG}" <<EOF
 }
 EOF
 
+chmod 600 "${TEMP_CONFIG}"
 mv "${TEMP_CONFIG}" "${OPENCODE_CONFIG_PATH}"
-trap - EXIT
 
-if ! validate_json_file "${OPENCODE_CONFIG_PATH}"; then
-  echo "ERROR: generated config is invalid JSON" >&2
-  if [[ -f "${BACKUP_PATH}" ]]; then
-    if validate_json_file "${BACKUP_PATH}"; then
-      mv "${BACKUP_PATH}" "${OPENCODE_CONFIG_PATH}"
-      echo "Restored backup to ${OPENCODE_CONFIG_PATH}" >&2
-    else
-      echo "Backup also invalid, removing corrupted file" >&2
-      rm -f "${OPENCODE_CONFIG_PATH}" "${BACKUP_PATH}"
-    fi
-  fi
+# Validate config
+if ! python3 -c "import json; json.load(open('${OPENCODE_CONFIG_PATH}'))" 2>/dev/null; then
+  echo "ERROR: invalid config generated" >&2
+  [[ -f "${BACKUP_PATH}" ]] && { mv "${BACKUP_PATH}" "${OPENCODE_CONFIG_PATH}" && echo "Restored backup" >&2; }
   exit 1
 fi
 
-echo "==> Wrote global OpenCode config to ${OPENCODE_CONFIG_PATH}"
+echo "==> Wrote config to ${OPENCODE_CONFIG_PATH}"
 
+# Install if needed
 if ! command -v opencode >/dev/null 2>&1; then
   if [[ "${AUTO_INSTALL_OPENCODE}" == "1" ]]; then
-    echo "==> opencode not found, attempting install via npm"
+    echo "==> Installing opencode..."
     need_cmd npm
-    npm install -g opencode-ai || {
-      echo "ERROR: failed to install opencode-ai globally" >&2
-      echo "Install it manually, then rerun this script."
-      exit 1
-    }
+    npm install -g opencode-ai || { echo "ERROR: failed to install opencode" >&2; exit 1; }
   else
-    echo "ERROR: opencode is not installed" >&2
-    echo "Install it first, or rerun with AUTO_INSTALL_OPENCODE=1"
+    echo "ERROR: opencode is not installed. Install manually or use AUTO_INSTALL_OPENCODE=1" >&2
     exit 1
   fi
 fi
 
+# Export API key for opencode to use
+[[ -n "${VLLM_API_KEY}" ]] && export OPC_API_KEY="${VLLM_API_KEY}"
+
 echo
-printf '%s\n' "==> Launching OpenCode with model: vllm/${VLLM_MODEL}"
-printf '%s\n' "==> Global config file: ${OPENCODE_CONFIG_PATH}"
-if [[ -n "${VLLM_API_KEY}" ]]; then
-  printf '%s\n' "==> Authorization header: enabled"
-else
-  printf '%s\n' "==> Authorization header: disabled"
-fi
+echo "==> Launching OpenCode with model: vllm/${MODEL}"
+echo "==> Config file: ${OPENCODE_CONFIG_PATH}"
+[[ -n "${VLLM_API_KEY}" ]] && echo "==> API key: via environment variable"
 echo
 
 exec opencode
