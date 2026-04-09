@@ -50,6 +50,16 @@ This script automates the configuration of OpenCode to work with your local or s
 - **python3** (for JSON parsing and validation)
 - **npm** (optional, for auto-installing opencode)
 
+## Platform Support
+
+This script is cross-platform and works on:
+
+- **macOS** (Intel and Apple Silicon)
+- **Linux** (all distributions)
+- **WSL** (Windows Subsystem for Linux)
+
+No platform-specific package managers are used—only POSIX-compatible tools.
+
 ## Configuration Options
 
 ### Environment Variables
