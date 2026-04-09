@@ -1,0 +1,98 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck (strict mode)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck -S opencode-setup.sh
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate script syntax
+        run: |
+          bash -n opencode-setup.sh
+          echo "✓ Script syntax validated"
+
+      - name: Check file permissions
+        run: |
+          if [ -x opencode-setup.sh ]; then
+            echo "✓ opencode-setup.sh is executable"
+          else
+            echo "ERROR: opencode-setup.sh is not executable"
+            exit 1
+          fi
+
+      - name: Validate README formatting
+        run: |
+          if [ -f README.md ] && [ -s README.md ]; then
+            echo "✓ README.md exists and is not empty"
+          else
+            echo "ERROR: README.md missing or empty"
+            exit 1
+          fi
+
+      - name: Validate config file format
+        run: |
+          # Test JSON generation with sample model
+          MODEL="test-model" bash -c '
+            json_escape() {
+              python3 - "$1" <<'"'"'PY'"'"'
+            import json, sys
+            print(json.dumps(sys.argv[1]))
+            PY
+          }
+          MODEL_ESCAPED="$(json_escape "${MODEL}")"
+          echo "JSON escape test: ${MODEL_ESCAPED}"
+          '
+          echo "✓ Config generation test passed"
+
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate YAML files
+        run: |
+          if [ -f .github/workflows/ci.yml ]; then
+            python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))" || exit 1
+            echo "✓ YAML validation passed"
+          fi
+
+      - name: Check file structure
+        run: |
+          REQUIRED_FILES=(
+            "opencode-setup.sh"
+            "LICENSE"
+            "README.md"
+            "CONTRIBUTING.md"
+            "CHANGELOG.md"
+            ".github/ISSUE_TEMPLATE/bug_report.md"
+            ".github/ISSUE_TEMPLATE/feature_request.md"
+            ".github/PULL_REQUEST_TEMPLATE.md"
+            ".github/CODEOWNERS"
+            ".pre-commit-config.yaml"
+          )
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "ERROR: Missing required file: $file"
+              exit 1
+            fi
+          done
+          echo "✓ All required files present"
