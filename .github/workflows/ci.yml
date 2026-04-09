@@ -53,13 +53,10 @@ jobs:
           # Test JSON generation with sample model
           MODEL="test-model" bash -c '
             json_escape() {
-              python3 - "$1" <<'"'"'PY'"'"'
-            import json, sys
-            print(json.dumps(sys.argv[1]))
-            PY
-          }
-          MODEL_ESCAPED="$(json_escape "${MODEL}")"
-          echo "JSON escape test: ${MODEL_ESCAPED}"
+              python3 -c '"'"'import json,sys; print(json.dumps(sys.argv[1]))'"'"' "$1"
+            }
+            MODEL_ESCAPED="$(json_escape "${MODEL}")"
+            echo "JSON escape test: ${MODEL_ESCAPED}"
           '
           echo "✓ Config generation test passed"
 
