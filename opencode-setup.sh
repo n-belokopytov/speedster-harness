@@ -81,6 +81,7 @@ fi
 
 # Generate config
 MODEL_ESCAPED="$(json_escape "${MODEL}")"
+MODEL_REF_ESCAPED="$(json_escape "vllm/${MODEL}")"
 BASE_URL_ESCAPED="$(json_escape "${VLLM_BASE_URL}")"
 
 TEMP_CONFIG="$(mktemp)"
@@ -99,7 +100,7 @@ cat > "${TEMP_CONFIG}" <<EOF
       }
     }
   },
-  "model": vllm/${MODEL_ESCAPED},
+  "model": ${MODEL_REF_ESCAPED},
   "permission": {
     "bash": "ask",
     "edit": "allow",
