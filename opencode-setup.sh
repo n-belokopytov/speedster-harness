@@ -64,8 +64,9 @@ MODELS_JSON="$(curl "${CURL_ARGS[@]}" "${VLLM_BASE_URL}/models")" || {
 
 echo "==> Found model: ${MODEL}"
 
-# Validate model name (alphanumeric, dash, underscore, slash, dot only)
-[[ ! "${MODEL}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_./-]*$ ]] && { echo "ERROR: invalid model name: ${MODEL}" >&2; exit 1; }
+# Validate model name minimally: reject whitespace/control characters only.
+# Allow provider-specific punctuation (for example, colon-suffixed variants).
+[[ "${MODEL}" =~ [[:space:][:cntrl:]] ]] && { echo "ERROR: invalid model name: ${MODEL}" >&2; exit 1; }
 
 # Create config directory with secure permissions
 mkdir -p "${OPENCODE_CONFIG_DIR}"
