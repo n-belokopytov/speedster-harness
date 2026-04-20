@@ -5,6 +5,7 @@
 An autonomous agent system with three roles (EM, Engineer, QA) that processes tasks, breaks them down, implements code, and reviews quality. Each role runs as an independent OpenCode container with its own model, communicating via Redis pub/sub and HTTP APIs. Designed for unlimited-token machines with open-weight models, where quality is paramount and operations may span multiple hours.
 
 **Key principles:**
+
 - Unlimited token consumption (no cost constraints) — context window management and token tracking only
 - Quality-first — QA has no hard retry cap, iterates until approved
 - Multi-hour autonomous operation — checkpoint/recovery, health monitoring, crash resilience
@@ -342,6 +343,7 @@ class GitHandler:
 ### `speedster/message_builder.py` - Prompt Assembly with Context Window Enforcement
 
 Orchestrator constructs each agent's prompt by:
+
 1. Loading relevant context from Redis (breakdown.json, acceptance criteria, diffs, feedback)
 2. Embedding previous artifacts (e.g., EM's breakdown, QA's feedback)
 3. Respecting context window limits per role
@@ -640,6 +642,7 @@ New task detected (watch or Redis pub/sub)
 Agents are configured with these system prompts:
 
 ### EM Agent
+
 ```
 You are an Engineering Manager. Given a task description and the codebase,
 break it down into independent subtasks that can be parallelized.
@@ -662,6 +665,7 @@ Output: a structured JSON breakdown with subtasks, dependencies, and acceptance 
 ```
 
 ### Engineer Agent
+
 ```
 You are a Software Engineer. Implement the following subtask.
 
@@ -682,6 +686,7 @@ Push your changes to the branch after completing.
 ```
 
 ### QA Agent
+
 ```
 You are a QA Engineer. Review the implementation against:
 1. Acceptance criteria - are ALL criteria met?
@@ -705,341 +710,95 @@ IMPORTANT: You only receive the diff + changed files, not the entire codebase.
 Each iteration must ship a usable increment, not just scaffolding. The core value is preserved from Iteration 1 onward: **EM, Engineer, and QA are separate roles with independently configurable models**.
 
 ### Iteration 1: Vertical Slice (single task, single engineer)
+
 Goal: prove the full EM -> Engineer -> QA loop works end-to-end with three different role models.
 
-```json
-{
-  "task_id": "iter-1-vertical-slice",
-  "subtasks": [
-    {
-      "id": "iter-1-vertical-slice-1",
-      "description": "Create the Iteration 1 project baseline by adding pyproject configuration, minimal dependencies, and runnable package skeletons for speedster and agent modules.",
-      "acceptance_criteria": [
-        "pyproject.toml declares the required Iteration 1 dependencies (pydantic, httpx, redis, fastapi, uvicorn, typer) and a runnable package entry setup for speedster and agent.",
-        "The package/layout design for this subtask follows SOLID principles by keeping module responsibilities separated and dependency boundaries explicit.",
-        "The implementation follows YAGNI and KISS by adding only the minimal build/runtime setup needed for Iteration 1 execution.",
-        "Well-designed unit tests validate configuration/package-loading behavior introduced by this subtask, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "pyproject.toml",
-        "speedster/",
-        "agent/"
-      ],
-      "depends_on": [],
-      "parallel_group": 0,
-      "estimated_context_tokens": 3500,
-      "estimated_work_tokens": 12000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-2",
-      "description": "Implement role configuration models in speedster/config.py with explicit model mapping for em, engineer, and qa plus strict runtime validation.",
-      "acceptance_criteria": [
-        "speedster/config.py defines explicit per-role model mapping and rejects invalid or missing role/model configuration at runtime.",
-        "Configuration types and validation logic follow SOLID principles with clear separation between schema definition and loading/validation behavior.",
-        "The solution follows YAGNI and KISS by limiting configuration scope to Iteration 1 role model mapping requirements.",
-        "Well-designed unit tests cover valid and invalid configuration scenarios, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/config.py",
-        "pyproject.toml"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-1"
-      ],
-      "parallel_group": 1,
-      "estimated_context_tokens": 4500,
-      "estimated_work_tokens": 14000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-3",
-      "description": "Implement agent/server.py FastAPI service exposing only /work and /health with typed request/response contracts and deterministic error handling.",
-      "acceptance_criteria": [
-        "agent/server.py exposes only /work and /health endpoints with documented request/response models and deterministic non-200 error responses for invalid input.",
-        "Endpoint handlers and transport models follow SOLID principles by separating transport DTOs, service logic, and error mapping responsibilities.",
-        "The implementation follows YAGNI and KISS by avoiding extra endpoints or orchestration logic outside Iteration 1 needs.",
-        "Well-designed unit tests validate /work and /health success/failure paths, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "agent/server.py",
-        "agent/main.py",
-        "speedster/config.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-1",
-        "iter-1-vertical-slice-2"
-      ],
-      "parallel_group": 2,
-      "estimated_context_tokens": 7000,
-      "estimated_work_tokens": 22000,
-      "complexity_level": "straightforward",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-4",
-      "description": "Implement orchestrator HTTP client in speedster/agent_client.py for role-targeted calls to /work and /health with Iteration 1 timeout and retry behavior.",
-      "acceptance_criteria": [
-        "speedster/agent_client.py can call /work and /health for em, engineer, and qa endpoints with explicit timeout and retry behavior appropriate for Iteration 1.",
-        "Client responsibilities follow SOLID principles with clear abstraction between request construction, transport execution, and response parsing.",
-        "The implementation follows YAGNI and KISS by using a minimal retry strategy and avoiding premature multi-replica load-balancing logic.",
-        "Well-designed unit tests validate success, timeout, and retry cases, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/agent_client.py",
-        "agent/server.py",
-        "speedster/config.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-2",
-        "iter-1-vertical-slice-3"
-      ],
-      "parallel_group": 3,
-      "estimated_context_tokens": 6500,
-      "estimated_work_tokens": 20000,
-      "complexity_level": "straightforward",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-5",
-      "description": "Implement strict output validation in speedster/output_validator.py for EM breakdown payloads and QA review payloads with deterministic rejection on malformed JSON.",
-      "acceptance_criteria": [
-        "speedster/output_validator.py enforces strict JSON schema validation for EM breakdown and QA review outputs and returns deterministic validation errors for malformed payloads.",
-        "Validation logic follows SOLID principles by keeping schema definitions, parser behavior, and error translation isolated and testable.",
-        "The implementation follows YAGNI and KISS by supporting only Iteration 1 output contracts without speculative schema extensions.",
-        "Well-designed unit tests cover valid, invalid-shape, and invalid-JSON cases, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/output_validator.py",
-        "speedster/config.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-2"
-      ],
-      "parallel_group": 2,
-      "estimated_context_tokens": 5000,
-      "estimated_work_tokens": 16000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-6",
-      "description": "Implement a minimal orchestrator state machine in speedster/orchestrator.py for one task and one subtask through EM planning, Engineer implementation, and QA approve/rework loop.",
-      "acceptance_criteria": [
-        "speedster/orchestrator.py executes one-task flow EM -> Engineer -> QA and repeats Engineer rework when QA rejects until approved or explicit terminal state.",
-        "Orchestration flow follows SOLID principles by separating state transition logic, external client interactions, and validation concerns.",
-        "The implementation follows YAGNI and KISS by limiting control flow to Iteration 1 single-task/single-subtask behavior.",
-        "Well-designed unit tests validate happy path and one reject-then-approve path for state transitions, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/orchestrator.py",
-        "speedster/agent_client.py",
-        "speedster/output_validator.py",
-        "speedster/config.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-4",
-        "iter-1-vertical-slice-5"
-      ],
-      "parallel_group": 4,
-      "estimated_context_tokens": 9000,
-      "estimated_work_tokens": 30000,
-      "complexity_level": "straightforward",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-7",
-      "description": "Create canonical Iteration 1 task fixture in tasks/task-001/task.json aligned with orchestrator and validator contracts for the vertical slice scenario.",
-      "acceptance_criteria": [
-        "tasks/task-001/task.json exists and is valid against Iteration 1 expected task input shape used by orchestrator and validators.",
-        "Fixture definition and parsing responsibilities follow SOLID principles by keeping schema and orchestration logic decoupled.",
-        "The fixture remains YAGNI and KISS compliant by containing only fields required for Iteration 1 execution.",
-        "Well-designed unit tests validate fixture loading and schema compatibility, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "tasks/task-001/task.json",
-        "speedster/orchestrator.py",
-        "speedster/output_validator.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-2",
-        "iter-1-vertical-slice-5"
-      ],
-      "parallel_group": 3,
-      "estimated_context_tokens": 3000,
-      "estimated_work_tokens": 9000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-8",
-      "description": "Implement end-to-end integration tests proving task completion occurs only after QA approval, including at least one reject-then-pass cycle.",
-      "acceptance_criteria": [
-        "An integration test executes the Iteration 1 vertical slice and asserts task status becomes done only after QA returns approved true.",
-        "Test orchestration and assertions follow SOLID principles with reusable fixtures and isolated test responsibilities.",
-        "The test suite follows YAGNI and KISS by validating only Iteration 1 behavior without introducing non-required scenario breadth.",
-        "Well-designed unit tests cover the approval gate behavior, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/orchestrator.py",
-        "speedster/agent_client.py",
-        "tests/"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-6",
-        "iter-1-vertical-slice-7"
-      ],
-      "parallel_group": 5,
-      "estimated_context_tokens": 8500,
-      "estimated_work_tokens": 26000,
-      "complexity_level": "straightforward",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-9",
-      "description": "Add structured observability fields to record role, model identifier, call latency, and QA round number for each orchestration step.",
-      "acceptance_criteria": [
-        "Execution logs/metrics include role, model identifier, latency, and QA round fields for EM, Engineer, and QA calls in a single run.",
-        "Observability implementation follows SOLID principles by separating telemetry formatting from orchestration decision logic.",
-        "The implementation follows YAGNI and KISS by introducing only Iteration 1 telemetry fields required by exit criteria.",
-        "Well-designed unit tests validate telemetry payload structure and emission points, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "speedster/orchestrator.py",
-        "speedster/agent_client.py",
-        "speedster/performance_tracker.py"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-6"
-      ],
-      "parallel_group": 5,
-      "estimated_context_tokens": 6000,
-      "estimated_work_tokens": 17000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "iter-1-vertical-slice-10",
-      "description": "Produce an Iteration 1 runbook plus a lightweight verification helper that executes two consecutive reproducible runs and captures proof of role-specific models and QA feedback loop behavior.",
-      "acceptance_criteria": [
-        "A runbook documents the exact command sequence to execute Iteration 1 twice consecutively and collect reproducibility evidence (role model mapping and QA reject-then-pass path).",
-        "The runbook and verification helper follow SOLID principles by separating setup, execution orchestration, and result validation responsibilities.",
-        "The implementation follows YAGNI and KISS by including only Iteration 1 operational checks and avoiding non-required automation features.",
-        "Well-designed unit tests cover verification-helper parsing/validation logic, with minimum unit test coverage of 80%+ for touched modules."
-      ],
-      "context_files": [
-        "README.md",
-        "PLAN.md",
-        "tests/"
-      ],
-      "depends_on": [
-        "iter-1-vertical-slice-8",
-        "iter-1-vertical-slice-9"
-      ],
-      "parallel_group": 6,
-      "estimated_context_tokens": 4000,
-      "estimated_work_tokens": 10000,
-      "complexity_level": "simple",
-      "target_model_class": "mid-size-25B",
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
-    }
-  ]
-}
-```
+Execution breakdown: [`tasks/iter-1-vertical-slice/breakdown.json`](tasks/iter-1-vertical-slice/breakdown.json) — normalized and validated against `schemas/em_breakdown.schema.json`.
+
+High-level requirements:
+
+- `pyproject.toml` and minimal dependencies (`pydantic`, `httpx`, `redis`, `fastapi`, `uvicorn`, `typer`)
+- `speedster/config.py` with explicit per-role model mapping (`em.model`, `engineer.model`, `qa.model`)
+- `agent/server.py` exposing `/work` and `/health` only (single transport path)
+- `speedster/agent_client.py` for orchestrator -> agent HTTP calls
+- `speedster/output_validator.py` with strict schemas for EM breakdown and QA review output
+- `speedster/orchestrator.py` minimal state machine: one task -> one subtask -> QA approve/rework loop
+- `tasks/task-001/task.json` and one concrete example scenario
+- End-to-end test: task is completed only when QA approves acceptance criteria
 
 Exit criteria:
+
 - Distinct models are actually invoked per role and recorded in logs/metrics
 - A single failed QA round can be fed back to Engineer and then pass on next attempt
 
 ### Iteration 2: Durable State + Recovery
+
 Goal: make the system restart-safe for multi-hour operation.
 
-- [ ] `speedster/redis_client.py` for durable task and subtask state (KV + optimistic updates)
-- [ ] `speedster/checkpoint.py` with no short TTL on active checkpoints
-- [ ] Resume logic in orchestrator startup (recover non-terminal tasks)
-- [ ] Health heartbeat for agents and orchestrator
-- [ ] Failure handling for agent timeout, invalid output, and temporary network failures
+- `speedster/redis_client.py` for durable task and subtask state (KV + optimistic updates)
+- `speedster/checkpoint.py` with no short TTL on active checkpoints
+- Resume logic in orchestrator startup (recover non-terminal tasks)
+- Health heartbeat for agents and orchestrator
+- Failure handling for agent timeout, invalid output, and temporary network failures
 
 Exit criteria:
+
 - Kill orchestrator mid-task, restart, and continue from last persisted step
 - No task duplication or lost progress across restart
 
 ### Iteration 3: Git Integration + Deterministic Merge
+
 Goal: produce auditable code artifacts with predictable merge behavior.
 
-- [ ] `agent/git_client.py` clone/push support using configured credentials
-- [ ] `speedster/git_handler.py` with branch-per-subtask (not per-group) for deterministic isolation
-- [ ] Orchestrator merge flow: approved subtask branch -> task branch serially
-- [ ] Persist diff artifacts for QA context and audit trail
+- `agent/git_client.py` clone/push support using configured credentials
+- `speedster/git_handler.py` with branch-per-subtask (not per-group) for deterministic isolation
+- Orchestrator merge flow: approved subtask branch -> task branch serially
+- Persist diff artifacts for QA context and audit trail
 
 Exit criteria:
+
 - Parallel-ready branch model validated with at least two independent subtasks
 - Merge conflicts are surfaced clearly and task status moves to `conflict` without corruption
 
 ### Iteration 4: Controlled Parallelism
+
 Goal: increase throughput while keeping correctness stable.
 
-- [ ] Topological sort of EM subtasks into executable groups
-- [ ] Multiple engineer replicas and queueing strategy
-- [ ] Parallel execution of independent subtasks
-- [ ] Group completion barrier before advancing dependency level
+- Topological sort of EM subtasks into executable groups
+- Multiple engineer replicas and queueing strategy
+- Parallel execution of independent subtasks
+- Group completion barrier before advancing dependency level
 
 Exit criteria:
+
 - Two or more independent subtasks run concurrently and complete correctly
 - Dependent subtasks never start before prerequisites are done
 
 ### Iteration 5: Context Management + Quality Hardening
+
 Goal: improve correctness at scale without unnecessary complexity.
 
-- [ ] `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly
-- [ ] Chunking/summarization protocol for overflow cases (with deterministic handoff format)
-- [ ] `speedster/performance_tracker.py` for per-role metrics (tokens, latency, QA rounds, approval rate)
-- [ ] Integration and regression tests for retry, resume, and QA feedback loops
+- `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly
+- Chunking/summarization protocol for overflow cases (with deterministic handoff format)
+- `speedster/performance_tracker.py` for per-role metrics (tokens, latency, QA rounds, approval rate)
+- Integration and regression tests for retry, resume, and QA feedback loops
 
 Exit criteria:
+
 - Large tasks no longer fail due to context overflow
 - Metrics show model usage by role and QA loop behavior over time
 
 ### Iteration 6: Operations + Developer Experience
+
 Goal: production usability and maintainability.
 
-- [ ] `speedster/main.py` CLI (`run`, `list`, `resume`, `status`)
-- [ ] `docker-compose.yml` for local multi-container deployment
-- [ ] Documentation (`README.md`, task format docs, troubleshooting)
-- [ ] `AGENTS.md` with role prompt governance and operating guardrails
+- `speedster/main.py` CLI (`run`, `list`, `resume`, `status`)
+- `docker-compose.yml` for local multi-container deployment
+- Documentation (`README.md`, task format docs, troubleshooting)
+- `AGENTS.md` with role prompt governance and operating guardrails
 
 Exit criteria:
+
 - New user can boot system and run a sample task from docs
 - Operator can inspect status, resume failed runs, and diagnose conflicts quickly
 
@@ -1050,87 +809,100 @@ Use these as release gates. An iteration is complete only when all checklist ite
 ### Iteration 1 Checklist (Vertical Slice)
 
 #### Build Checklist
-- [ ] Role configs support different models for `em`, `engineer`, and `qa`
-- [ ] Agent HTTP server responds on `/work` and `/health`
-- [ ] Orchestrator can execute EM -> Engineer -> QA loop for one task
-- [ ] Output validator rejects malformed EM/QA JSON and triggers retry
-- [ ] Example task input exists and can be executed end-to-end
+
+- Role configs support different models for `em`, `engineer`, and `qa`
+- Agent HTTP server responds on `/work` and `/health`
+- Orchestrator can execute EM -> Engineer -> QA loop for one task
+- Output validator rejects malformed EM/QA JSON and triggers retry
+- Example task input exists and can be executed end-to-end
 
 #### Acceptance Checklist
-- [ ] Logs show distinct model identifier used per role in a single run
-- [ ] QA can reject implementation with actionable feedback
-- [ ] Engineer can re-run with QA feedback and produce updated output
-- [ ] Task is marked `done` only after QA approval
-- [ ] End-to-end run is reproducible across at least 2 consecutive runs
+
+- Logs show distinct model identifier used per role in a single run
+- QA can reject implementation with actionable feedback
+- Engineer can re-run with QA feedback and produce updated output
+- Task is marked `done` only after QA approval
+- End-to-end run is reproducible across at least 2 consecutive runs
 
 ### Iteration 2 Checklist (Durable State + Recovery)
 
 #### Build Checklist
-- [ ] Task and subtask state is persisted durably in Redis
-- [ ] Checkpoint entries for active work do not expire prematurely
-- [ ] Orchestrator startup includes resume/recovery path
-- [ ] Agent and orchestrator heartbeat/health status is persisted
-- [ ] Timeout and transient network error paths are handled deterministically
+
+- Task and subtask state is persisted durably in Redis
+- Checkpoint entries for active work do not expire prematurely
+- Orchestrator startup includes resume/recovery path
+- Agent and orchestrator heartbeat/health status is persisted
+- Timeout and transient network error paths are handled deterministically
 
 #### Acceptance Checklist
-- [ ] Forced orchestrator crash mid-task resumes from last checkpoint
-- [ ] No duplicate subtask execution after restart
-- [ ] No task state regression (cannot move backward to invalid state)
-- [ ] Recovery behavior validated on at least 3 restart scenarios
+
+- Forced orchestrator crash mid-task resumes from last checkpoint
+- No duplicate subtask execution after restart
+- No task state regression (cannot move backward to invalid state)
+- Recovery behavior validated on at least 3 restart scenarios
 
 ### Iteration 3 Checklist (Git Integration + Deterministic Merge)
 
 #### Build Checklist
-- [ ] Agents can clone/pull/push with configured credentials
-- [ ] Branch naming is per-subtask and unique
-- [ ] Approved subtasks merge serially into task branch
-- [ ] Diff artifacts are persisted for QA/audit consumption
-- [ ] Conflict state transition is explicit and queryable
+
+- Agents can clone/pull/push with configured credentials
+- Branch naming is per-subtask and unique
+- Approved subtasks merge serially into task branch
+- Diff artifacts are persisted for QA/audit consumption
+- Conflict state transition is explicit and queryable
 
 #### Acceptance Checklist
-- [ ] Two independent subtasks produce isolated branches without cross-contamination
-- [ ] Conflicting changes produce `conflict` status without data loss
-- [ ] Non-conflicting subtasks merge in deterministic order
-- [ ] Audit trail links subtask -> branch -> diff -> QA decision
+
+- Two independent subtasks produce isolated branches without cross-contamination
+- Conflicting changes produce `conflict` status without data loss
+- Non-conflicting subtasks merge in deterministic order
+- Audit trail links subtask -> branch -> diff -> QA decision
 
 ### Iteration 4 Checklist (Controlled Parallelism)
 
 #### Build Checklist
-- [ ] Topological grouping enforces dependency correctness
-- [ ] Engineer worker selection/queueing supports concurrent subtasks
-- [ ] Group barrier prevents next dependency level from starting early
-- [ ] Shared state updates are concurrency-safe
+
+- Topological grouping enforces dependency correctness
+- Engineer worker selection/queueing supports concurrent subtasks
+- Group barrier prevents next dependency level from starting early
+- Shared state updates are concurrency-safe
 
 #### Acceptance Checklist
-- [ ] At least 2 independent subtasks run truly in parallel
-- [ ] Dependent subtasks wait until prerequisites are `done`
-- [ ] Parallel runs produce stable final task state across repeated runs
-- [ ] Throughput improves vs Iteration 3 baseline without correctness regressions
+
+- At least 2 independent subtasks run truly in parallel
+- Dependent subtasks wait until prerequisites are `done`
+- Parallel runs produce stable final task state across repeated runs
+- Throughput improves vs Iteration 3 baseline without correctness regressions
 
 ### Iteration 5 Checklist (Context + Quality Hardening)
 
 #### Build Checklist
-- [ ] Prompt builder applies role-specific context window limits
-- [ ] Overflow strategy (chunk/summarize) uses deterministic handoff format
-- [ ] Performance tracker records per-role tokens/latency/approval metrics
-- [ ] Retry and QA feedback loop tests cover failure and success paths
+
+- Prompt builder applies role-specific context window limits
+- Overflow strategy (chunk/summarize) uses deterministic handoff format
+- Performance tracker records per-role tokens/latency/approval metrics
+- Retry and QA feedback loop tests cover failure and success paths
 
 #### Acceptance Checklist
-- [ ] Large-context task completes without context-overflow failure
-- [ ] QA loop metrics are queryable by task and by role
-- [ ] Retry behavior does not create duplicate state transitions
-- [ ] Regression suite passes for retry/resume/QA feedback scenarios
+
+- Large-context task completes without context-overflow failure
+- QA loop metrics are queryable by task and by role
+- Retry behavior does not create duplicate state transitions
+- Regression suite passes for retry/resume/QA feedback scenarios
 
 ### Iteration 6 Checklist (Operations + DX)
 
 #### Build Checklist
-- [ ] CLI commands implemented: `run`, `list`, `resume`, `status`
-- [ ] Local deployment via `docker-compose.yml` works from clean checkout
-- [ ] Documentation includes setup, sample run, and failure recovery steps
-- [ ] `AGENTS.md` defines prompt and behavior guardrails by role
+
+- CLI commands implemented: `run`, `list`, `resume`, `status`
+- Local deployment via `docker-compose.yml` works from clean checkout
+- Documentation includes setup, sample run, and failure recovery steps
+- `AGENTS.md` defines prompt and behavior guardrails by role
 
 #### Acceptance Checklist
-- [ ] New developer can complete first run via docs in one session
-- [ ] Operator can identify blocked/conflict tasks from CLI status output
-- [ ] Resume workflow is validated and documented with example
-- [ ] Troubleshooting guidance covers top 5 likely operational failures
+
+- New developer can complete first run via docs in one session
+- Operator can identify blocked/conflict tasks from CLI status output
+- Resume workflow is validated and documented with example
+- Troubleshooting guidance covers top 5 likely operational failures
+
