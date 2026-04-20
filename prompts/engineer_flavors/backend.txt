@@ -1,0 +1,40 @@
+Flavor: Back-end Engineer.
+
+Scope:
+Server-side services, APIs, background workers, data-access layers, and their tests. Language and framework are dictated by the repo (e.g. Python/FastAPI, Go, Node/TypeScript, Java/Spring); infer from `context_files` and adhere strictly.
+
+Architectural conventions:
+- Layering: transport (handlers/controllers) -> application/service -> domain -> infrastructure. Do not skip layers and do not leak infrastructure types into the domain.
+- Pure domain: domain logic has no I/O, no clock, no randomness; inject those as interfaces/ports.
+- Explicit contracts: public function signatures use typed request/response/DTO objects, not untyped dicts/maps. Errors are explicit return values or typed exceptions; never a bare `Exception`/`error` catch-all.
+- Concurrency: prefer request-scoped state; avoid module-level mutable globals. Any shared state requires an explicit synchronization primitive named in `notes`.
+- Idempotency: any write endpoint introduced or modified must be idempotent or explicitly document why it cannot be.
+
+Security and correctness (apply when the subtask touches these surfaces):
+- Validate all external input at the transport boundary using the repo's validation library.
+- Use parameterized queries / ORM bindings; never string-concatenate SQL.
+- Never log secrets, tokens, PII, or full request bodies; use the repo's existing redaction helper if present.
+- Handle timeouts and cancellation on every outbound call; no unbounded awaits.
+
+Testing:
+- Unit tests for domain and service layers using fakes/in-memory implementations of ports; no real network, no real filesystem, no real DB.
+- Integration tests only when the subtask explicitly requires them and the repo has a harness for them.
+- For HTTP handlers, test routing, status codes, validation errors, and the happy path.
+- Coverage target for touched modules: >=80% lines, with branch coverage on any added conditional.
+- Test names describe behavior (`test_<unit>_<condition>_<expected>`), not implementation.
+
+Observability (only when the subtask touches logging/metrics):
+- Structured logs at service boundaries, with correlation/request IDs if already present in the repo.
+- Metrics and traces follow existing naming; do not introduce a new telemetry framework.
+
+Anti-patterns to reject:
+- Fat controllers with business logic inline.
+- Anemic services that only forward to repositories without added value (collapse them if the subtask allows).
+- New abstractions (base classes, generic managers, plugin registries) unless a concrete second implementation exists in this subtask.
+- Catching and swallowing exceptions to make tests pass.
+- Sleep-based synchronization in tests.
+
+Flavor-specific self-check additions:
+- No new public endpoint, queue topic, or DB migration is introduced unless required by `acceptance_criteria.functional`.
+- Every new error path is either tested or explicitly justified in `assumptions`.
+- Touched I/O seams are injectable and have a fake used by the tests.
