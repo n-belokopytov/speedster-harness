@@ -694,44 +694,175 @@ Use your tools: read, grep, glob, bash.
 IMPORTANT: You only receive the diff + changed files, not the entire codebase.
 ```
 
-## Implementation Phases
+## Implementation Iterations
 
-### Phase 1: Core Infrastructure + Redis State Machine
-- [ ] `pyproject.toml` with dependencies (`pydantic`, `typer`, `rich`, `watchfiles`, `aiofiles`, `httpx`, `redis`, `fastapi`, `uvicorn`)
-- [ ] `speedster/config.py` - Pydantic models (config, roles, model mapping, context windows, Redis config)
-- [ ] `speedster/redis_client.py` - Pub/sub + KV + heartbeat management
-- [ ] `speedster/checkpoint.py` - Crash recovery state machine
-- [ ] `speedster/output_validator.py` - JSON schema validation
-- [ ] `speedster/performance_tracker.py` - Metrics collection (no budget cap)
+Each iteration must ship a usable increment, not just scaffolding. The core value is preserved from Iteration 1 onward: **EM, Engineer, and QA are separate roles with independently configurable models**.
 
-### Phase 2: Agent Container + Communication
-- [ ] `agent/server.py` - HTTP API (FastAPI) wrapping OpenCode ACP
-- [ ] `agent/worker.py` - Redis subscriber for async work
-- [ ] `agent/git_client.py` - Clone/push to central repo
-- [ ] `agent/config.py` - Role-specific tool permissions + model config
-- [ ] `speedster/agent_client.py` - HTTP client to call remote agents
-- [ ] `agent/Dockerfile` - Container image with OpenCode + agent code
-- [ ] `agent/requirements.txt`
+### Iteration 1: Vertical Slice (single task, single engineer)
+Goal: prove the full EM -> Engineer -> QA loop works end-to-end with three different role models.
 
-### Phase 3: Task Management + Git
-- [ ] `speedster/task_manager.py` - Redis-backed task state
-- [ ] `speedster/git_handler.py` - Branch-per-group, merge conflict resolution
-- [ ] `speedster/message_builder.py` - Prompt assembly with context window enforcement + chunking
-- [ ] `speedster/utils.py` - Token counting, topological sort, targeted scanning
-- [ ] Task directory structure + example task in `tasks/`
+- [ ] `pyproject.toml` and minimal dependencies (`pydantic`, `httpx`, `redis`, `fastapi`, `uvicorn`, `typer`)
+- [ ] `speedster/config.py` with explicit per-role model mapping (`em.model`, `engineer.model`, `qa.model`)
+- [ ] `agent/server.py` exposing `/work` and `/health` only (single transport path)
+- [ ] `speedster/agent_client.py` for orchestrator -> agent HTTP calls
+- [ ] `speedster/output_validator.py` with strict schemas for EM breakdown and QA review output
+- [ ] `speedster/orchestrator.py` minimal state machine: one task -> one subtask -> QA approve/rework loop
+- [ ] `tasks/task-001/task.json` and one concrete example scenario
+- [ ] End-to-end test: task is completed only when QA approves acceptance criteria
 
-### Phase 4: Roles + Orchestration
-- [ ] `speedster/orchestrator.py` - Full workflow engine (EM → parallel groups → QA loop → merge)
-- [ ] Role integration (EM orchestrates breakdown, Engineer orchestrates implementation, QA orchestrates review loop)
-- [ ] Health check integration
+Exit criteria:
+- Distinct models are actually invoked per role and recorded in logs/metrics
+- A single failed QA round can be fed back to Engineer and then pass on next attempt
 
-### Phase 5: CLI + Docker
-- [ ] `speedster/main.py` - CLI with typer (`run`, `list`, `init`, `reset`)
-- [ ] `docker-compose.yml`
-- [ ] `agent/Dockerfile`
-- [ ] Integration test: end-to-end single task
+### Iteration 2: Durable State + Recovery
+Goal: make the system restart-safe for multi-hour operation.
 
-### Phase 6: Polish
-- [ ] Update `README.md` with agent documentation
-- [ ] Example task + breakdown in `tasks/`
-- [ ] `AGENTS.md` for ongoing agent instructions
+- [ ] `speedster/redis_client.py` for durable task and subtask state (KV + optimistic updates)
+- [ ] `speedster/checkpoint.py` with no short TTL on active checkpoints
+- [ ] Resume logic in orchestrator startup (recover non-terminal tasks)
+- [ ] Health heartbeat for agents and orchestrator
+- [ ] Failure handling for agent timeout, invalid output, and temporary network failures
+
+Exit criteria:
+- Kill orchestrator mid-task, restart, and continue from last persisted step
+- No task duplication or lost progress across restart
+
+### Iteration 3: Git Integration + Deterministic Merge
+Goal: produce auditable code artifacts with predictable merge behavior.
+
+- [ ] `agent/git_client.py` clone/push support using configured credentials
+- [ ] `speedster/git_handler.py` with branch-per-subtask (not per-group) for deterministic isolation
+- [ ] Orchestrator merge flow: approved subtask branch -> task branch serially
+- [ ] Persist diff artifacts for QA context and audit trail
+
+Exit criteria:
+- Parallel-ready branch model validated with at least two independent subtasks
+- Merge conflicts are surfaced clearly and task status moves to `conflict` without corruption
+
+### Iteration 4: Controlled Parallelism
+Goal: increase throughput while keeping correctness stable.
+
+- [ ] Topological sort of EM subtasks into executable groups
+- [ ] Multiple engineer replicas and queueing strategy
+- [ ] Parallel execution of independent subtasks
+- [ ] Group completion barrier before advancing dependency level
+
+Exit criteria:
+- Two or more independent subtasks run concurrently and complete correctly
+- Dependent subtasks never start before prerequisites are done
+
+### Iteration 5: Context Management + Quality Hardening
+Goal: improve correctness at scale without unnecessary complexity.
+
+- [ ] `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly
+- [ ] Chunking/summarization protocol for overflow cases (with deterministic handoff format)
+- [ ] `speedster/performance_tracker.py` for per-role metrics (tokens, latency, QA rounds, approval rate)
+- [ ] Integration and regression tests for retry, resume, and QA feedback loops
+
+Exit criteria:
+- Large tasks no longer fail due to context overflow
+- Metrics show model usage by role and QA loop behavior over time
+
+### Iteration 6: Operations + Developer Experience
+Goal: production usability and maintainability.
+
+- [ ] `speedster/main.py` CLI (`run`, `list`, `resume`, `status`)
+- [ ] `docker-compose.yml` for local multi-container deployment
+- [ ] Documentation (`README.md`, task format docs, troubleshooting)
+- [ ] `AGENTS.md` with role prompt governance and operating guardrails
+
+Exit criteria:
+- New user can boot system and run a sample task from docs
+- Operator can inspect status, resume failed runs, and diagnose conflicts quickly
+
+## Iteration Checklists
+
+Use these as release gates. An iteration is complete only when all checklist items are checked.
+
+### Iteration 1 Checklist (Vertical Slice)
+
+#### Build Checklist
+- [ ] Role configs support different models for `em`, `engineer`, and `qa`
+- [ ] Agent HTTP server responds on `/work` and `/health`
+- [ ] Orchestrator can execute EM -> Engineer -> QA loop for one task
+- [ ] Output validator rejects malformed EM/QA JSON and triggers retry
+- [ ] Example task input exists and can be executed end-to-end
+
+#### Acceptance Checklist
+- [ ] Logs show distinct model identifier used per role in a single run
+- [ ] QA can reject implementation with actionable feedback
+- [ ] Engineer can re-run with QA feedback and produce updated output
+- [ ] Task is marked `done` only after QA approval
+- [ ] End-to-end run is reproducible across at least 2 consecutive runs
+
+### Iteration 2 Checklist (Durable State + Recovery)
+
+#### Build Checklist
+- [ ] Task and subtask state is persisted durably in Redis
+- [ ] Checkpoint entries for active work do not expire prematurely
+- [ ] Orchestrator startup includes resume/recovery path
+- [ ] Agent and orchestrator heartbeat/health status is persisted
+- [ ] Timeout and transient network error paths are handled deterministically
+
+#### Acceptance Checklist
+- [ ] Forced orchestrator crash mid-task resumes from last checkpoint
+- [ ] No duplicate subtask execution after restart
+- [ ] No task state regression (cannot move backward to invalid state)
+- [ ] Recovery behavior validated on at least 3 restart scenarios
+
+### Iteration 3 Checklist (Git Integration + Deterministic Merge)
+
+#### Build Checklist
+- [ ] Agents can clone/pull/push with configured credentials
+- [ ] Branch naming is per-subtask and unique
+- [ ] Approved subtasks merge serially into task branch
+- [ ] Diff artifacts are persisted for QA/audit consumption
+- [ ] Conflict state transition is explicit and queryable
+
+#### Acceptance Checklist
+- [ ] Two independent subtasks produce isolated branches without cross-contamination
+- [ ] Conflicting changes produce `conflict` status without data loss
+- [ ] Non-conflicting subtasks merge in deterministic order
+- [ ] Audit trail links subtask -> branch -> diff -> QA decision
+
+### Iteration 4 Checklist (Controlled Parallelism)
+
+#### Build Checklist
+- [ ] Topological grouping enforces dependency correctness
+- [ ] Engineer worker selection/queueing supports concurrent subtasks
+- [ ] Group barrier prevents next dependency level from starting early
+- [ ] Shared state updates are concurrency-safe
+
+#### Acceptance Checklist
+- [ ] At least 2 independent subtasks run truly in parallel
+- [ ] Dependent subtasks wait until prerequisites are `done`
+- [ ] Parallel runs produce stable final task state across repeated runs
+- [ ] Throughput improves vs Iteration 3 baseline without correctness regressions
+
+### Iteration 5 Checklist (Context + Quality Hardening)
+
+#### Build Checklist
+- [ ] Prompt builder applies role-specific context window limits
+- [ ] Overflow strategy (chunk/summarize) uses deterministic handoff format
+- [ ] Performance tracker records per-role tokens/latency/approval metrics
+- [ ] Retry and QA feedback loop tests cover failure and success paths
+
+#### Acceptance Checklist
+- [ ] Large-context task completes without context-overflow failure
+- [ ] QA loop metrics are queryable by task and by role
+- [ ] Retry behavior does not create duplicate state transitions
+- [ ] Regression suite passes for retry/resume/QA feedback scenarios
+
+### Iteration 6 Checklist (Operations + DX)
+
+#### Build Checklist
+- [ ] CLI commands implemented: `run`, `list`, `resume`, `status`
+- [ ] Local deployment via `docker-compose.yml` works from clean checkout
+- [ ] Documentation includes setup, sample run, and failure recovery steps
+- [ ] `AGENTS.md` defines prompt and behavior guardrails by role
+
+#### Acceptance Checklist
+- [ ] New developer can complete first run via docs in one session
+- [ ] Operator can identify blocked/conflict tasks from CLI status output
+- [ ] Resume workflow is validated and documented with example
+- [ ] Troubleshooting guidance covers top 5 likely operational failures

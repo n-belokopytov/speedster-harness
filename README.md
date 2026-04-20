@@ -200,6 +200,30 @@ vllm serve your-model --tensor-parallel-size 2 --max-model-len 32768
 
 ## Development
 
+### Ad-hoc EM Planning Assets
+
+Use these files during development to immediately apply the EM breakdown contract from `PLAN.md`:
+
+- EM prompt template: `prompts/em_system_prompt.txt`
+- Breakdown schema: `schemas/em_breakdown.schema.json`
+- Validator CLI (schema + dependency graph checks): `tools/validate_em_breakdown.py`
+
+Example workflow:
+
+```bash
+# 1) Generate breakdown JSON using your EM model and prompt template
+# (save output to tasks/task-001/breakdown.json)
+
+# 2) Validate output against schema and dependency semantics
+python3 tools/validate_em_breakdown.py tasks/task-001/breakdown.json
+```
+
+Optional setup (for schema validation dependency):
+
+```bash
+python3 -m pip install jsonschema
+```
+
 ### Testing
 
 Run shellcheck for code quality:
