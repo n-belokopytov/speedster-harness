@@ -26,9 +26,38 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9._:-]+-[0-9]+$"
     },
-    "acceptanceCriterion": {
-      "type": "string",
-      "minLength": 8
+    "acceptanceCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "functional",
+        "solid",
+        "yagni_kiss",
+        "testing"
+      ],
+      "properties": {
+        "functional": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "solid": {
+          "type": "string",
+          "pattern": "^The implementation adheres to SOLID principles by .+\\.$"
+        },
+        "yagni_kiss": {
+          "type": "string",
+          "pattern": "^The implementation adheres to YAGNI and KISS by .+\\.$"
+        },
+        "testing": {
+          "type": "string",
+          "pattern": "^Well-designed unit tests cover .+, with minimum unit test coverage of 80%\\+ for touched modules\\.$"
+        }
+      }
     },
     "subtask": {
       "type": "object",
@@ -38,6 +67,7 @@
         "description",
         "acceptance_criteria",
         "context_files",
+        "context_rationale",
         "depends_on",
         "parallel_group",
         "estimated_context_tokens",
@@ -57,54 +87,25 @@
           "minLength": 12
         },
         "acceptance_criteria": {
-          "type": "array",
-          "minItems": 5,
-          "allOf": [
-            {
-              "contains": {
-                "type": "string",
-                "pattern": "(?i)solid"
-              }
-            },
-            {
-              "contains": {
-                "type": "string",
-                "pattern": "(?i)yagni"
-              }
-            },
-            {
-              "contains": {
-                "type": "string",
-                "pattern": "(?i)kiss"
-              }
-            },
-            {
-              "contains": {
-                "type": "string",
-                "pattern": "(?i)(unit test|unit tests)"
-              }
-            },
-            {
-              "contains": {
-                "type": "string",
-                "pattern": "(?i)(80\\s*%\\+?|>=\\s*80\\s*%)"
-              }
-            }
-          ],
-          "items": {
-            "$ref": "#/$defs/acceptanceCriterion"
-          }
+          "$ref": "#/$defs/acceptanceCriteria"
         },
         "context_files": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
           "items": {
             "type": "string",
             "minLength": 1
           }
         },
+        "context_rationale": {
+          "type": "string",
+          "minLength": 8
+        },
         "depends_on": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/subtaskId"
           }
