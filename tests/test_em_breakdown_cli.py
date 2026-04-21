@@ -16,29 +16,28 @@ VALIDATE_CLI = REPO_ROOT / "tools" / "validate_em_breakdown.py"
 NORMALIZE_CLI = REPO_ROOT / "tools" / "normalize_em_breakdown.py"
 
 
-def _valid_subtask(sid: str, depends_on: list[str] | None = None) -> dict:
+def _valid_task(tid: str, depends_on: list[str] | None = None, children: list[dict] | None = None) -> dict:
     return {
-        "id": sid,
-        "description": f"Implement subtask {sid} responsibilities.",
+        "id": tid,
+        "description": f"Implement task {tid} responsibilities.",
         "acceptance_criteria": {
-            "functional": [f"{sid} produces expected outputs for happy path and error cases."],
+            "functional": [f"{tid} produces expected outputs for happy path and error cases."],
             "solid": (
                 "The implementation adheres to SOLID principles by separating schema, "
                 "logic, and transport concerns."
             ),
             "yagni_kiss": (
                 "The implementation adheres to YAGNI and KISS by avoiding speculative "
-                "abstractions beyond the subtask scope."
+                "abstractions beyond the task scope."
             ),
             "testing": (
                 "Well-designed unit tests cover happy path and error cases, "
                 "with minimum unit test coverage of 80%+ for touched modules."
             ),
         },
-        "context_files": [f"pkg/{sid}.py"],
-        "context_rationale": f"{sid} only modifies this module.",
+        "context_files": [f"pkg/{tid}.py"],
+        "context_rationale": f"{tid} only modifies this module.",
         "depends_on": depends_on or [],
-        "parallel_group": 0,
         "estimated_context_tokens": 4000,
         "estimated_work_tokens": 12000,
         "complexity_level": "simple",
@@ -46,15 +45,19 @@ def _valid_subtask(sid: str, depends_on: list[str] | None = None) -> dict:
         "status": "pending",
         "qa_rounds": 0,
         "feedback": None,
+        "tasks": children or [],
     }
 
 
 def _write_valid_breakdown(path: Path) -> None:
-    subs = [
-        _valid_subtask("t-1"),
-        _valid_subtask("t-2", depends_on=["t-1"]),
-    ]
-    path.write_text(json.dumps(normalize_breakdown({"task_id": "t", "subtasks": subs}), indent=2))
+    root = _valid_task(
+        "root",
+        children=[
+            _valid_task("a"),
+            _valid_task("b", depends_on=["a"]),
+        ],
+    )
+    path.write_text(json.dumps(normalize_breakdown(root), indent=2))
 
 
 @pytest.fixture
@@ -65,13 +68,18 @@ def valid_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def unsorted_children_path(tmp_path: Path) -> Path:
+    path = tmp_path / "unsorted.json"
+    root = _valid_task("root", children=[_valid_task("b"), _valid_task("a")])
+    path.write_text(json.dumps(root, indent=2))
+    return path
+
+
+@pytest.fixture
 def invalid_path(tmp_path: Path) -> Path:
     path = tmp_path / "invalid.json"
-    subs = [
-        _valid_subtask("t-2", depends_on=["t-1"]),
-        _valid_subtask("t-1"),
-    ]
-    path.write_text(json.dumps({"task_id": "t", "subtasks": subs}, indent=2))
+    root = _valid_task("root", children=[_valid_task("a", depends_on=["ghost"])])
+    path.write_text(json.dumps(root, indent=2))
     return path
 
 
@@ -116,27 +124,25 @@ class TestValidateCLI:
 
 
 class TestNormalizeCLI:
-    def test_stdout_output_is_sorted(self, invalid_path: Path) -> None:
+    def test_stdout_sorts_children_by_id(self, unsorted_children_path: Path) -> None:
         result = subprocess.run(
-            [sys.executable, str(NORMALIZE_CLI), str(invalid_path)],
+            [sys.executable, str(NORMALIZE_CLI), str(unsorted_children_path)],
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
-        ids = [s["id"] for s in data["subtasks"]]
-        assert ids == ["t-1", "t-2"]
+        assert [c["id"] for c in data["tasks"]] == ["a", "b"]
 
-    def test_in_place_rewrites_file(self, invalid_path: Path) -> None:
+    def test_in_place_rewrites_file(self, unsorted_children_path: Path) -> None:
         result = subprocess.run(
-            [sys.executable, str(NORMALIZE_CLI), str(invalid_path), "--in-place"],
+            [sys.executable, str(NORMALIZE_CLI), str(unsorted_children_path), "--in-place"],
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0, result.stderr
-        data = json.loads(invalid_path.read_text())
-        ids = [s["id"] for s in data["subtasks"]]
-        assert ids == ["t-1", "t-2"]
+        data = json.loads(unsorted_children_path.read_text())
+        assert [c["id"] for c in data["tasks"]] == ["a", "b"]
 
     def test_exit_two_on_missing_file(self, tmp_path: Path) -> None:
         missing = tmp_path / "missing.json"
