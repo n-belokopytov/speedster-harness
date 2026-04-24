@@ -12,4 +12,4 @@ repos:
         name: ShellCheck
         entry: shellcheck -S
         language: system
-        files: \.sh$
+        files: (opencode-setup|setup)\.sh$

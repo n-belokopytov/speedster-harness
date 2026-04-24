@@ -2,14 +2,15 @@
 
 ## Overview
 
-An autonomous agent system with three roles (EM, Engineer, QA) that processes tasks, breaks them down, implements code, and reviews quality. Each role runs as an independent OpenCode container with its own model, communicating via Redis pub/sub and HTTP APIs. Designed for unlimited-token machines with open-weight models, where quality is paramount and operations may span multiple hours.
+An autonomous agent system with three roles (EM, Engineer, QA) that processes tasks, implements code, and reviews quality. Each role runs as an independent OpenCode container with its own model, while the orchestrator remains the single source of progress state through a local CSV event log. Designed for unlimited-token machines with open-weight models, where quality is paramount and operations may span multiple hours.
 
 **Key principles:**
+
 - Unlimited token consumption (no cost constraints) — context window management and token tracking only
 - Quality-first — QA has no hard retry cap, iterates until approved
-- Multi-hour autonomous operation — checkpoint/recovery, health monitoring, crash resilience
+- Multi-hour autonomous operation — event-log replay recovery, health monitoring, crash resilience
 - Model agnostic — OpenCode wraps any model; each role configured with its own
-- Fully parallelized — branch-per-group git strategy, orchestrator-managed merge
+- Crash semantics are explicit — in-flight uncommitted work can be lost; recovery resumes from last pushed git state + event log
 
 ## Architecture
 
@@ -19,109 +20,113 @@ An autonomous agent system with three roles (EM, Engineer, QA) that processes ta
 │                                                                   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
 │  │   EM         │  │ Engineer     │  │   QA         │           │
-│  │  Container   │  │  (N replicas)│  │  Container   │           │
+│  │  Container   │  │  Container   │  │  Container   │           │
 │  │              │  │              │  │              │           │
 │  │  OpenCode    │  │  OpenCode    │  │  OpenCode    │           │
 │  │  ACP server  │  │  ACP server  │  │  ACP server  │           │
 │  │  HTTP API    │  │  HTTP API    │  │  HTTP API    │           │
-│  │  Redis client│  │  Redis client│  │  Redis client│           │
 │  │  Git client  │  │  Git client  │  │  Git client  │           │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
 │         │                 │                  │                   │
 │         └─────────────────┼──────────────────┘                   │
 │                           │                                      │
-│                    ┌──────▼──────┐         ┌──────────────┐      │
-│                    │    Redis    │◄────────│   Orchestrator│      │
-│                    │  Broker +   │         │   Container   │      │
-│                    │  KV Store   │         │              │      │
-│                    └─────────────┘         └──────┬───────┘      │
-│                                                   │               │
-│                                    ┌──────────────▼──────────┐   │
-│                                    │  Git Server (GitHub/    │   │
-│                                    │  GitLab/self-hosted)    │   │
-│                                    │  (repo + SSH)           │   │
-│                                    └─────────────────────────┘   │
+│                    ┌──────▼──────────────────────────┐           │
+│                    │        Orchestrator Container   │           │
+│                    │  - Workflow state machine       │           │
+│                    │  - CSV event log (local disk)  │           │
+│                    │  - Resume/replay logic         │           │
+│                    └──────┬──────────────────────────┘           │
+│                           │                                      │
+│                ┌──────────▼──────────┐                           │
+│                │ Git Server           │                           │
+│                │ (repo + SSH)         │                           │
+│                └──────────────────────┘                           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Communication Model
 
-Agents communicate via **hybrid shared state + orchestrator assembly**:
+Agents communicate via **HTTP work calls**, while orchestrator progress is stored in a **single local append-only CSV event log**.
 
 ### Artifact Flow
 
 ```
-Agent A (OpenCode ACP server in container)
+Orchestrator creates task
          │
-         │ writes artifacts to Git branch
-         │ reports metadata to Redis
+         │ appends: TaskCreated to `state/events.csv`
          ▼
-tasks/task-001/group-N/
-    ├── diff                    ← git diff for orchestrator
-    ├── qa-reviews/
-    │   └── ses_yyy/review.json ← QA output
-    └── checkpoints/
-        └── ses_xxx/output.log  ← raw agent session log
-
-Orchestrator reads Redis state + Git artifacts, assembles prompt for next agent
+EM role runs over HTTP
          │
+         │ returns implementation plan/checklist + acceptance criteria
+         │ appends: PlanningCompleted
          ▼
-Agent B (OpenCode ACP server in container) receives assembled prompt
-    - Previous agent's output (via file contents embedded in prompt)
-    - Task context + acceptance criteria
-    - Role-specific system prompt
-    - Context window limits enforced by orchestrator
+Engineer role runs over HTTP
+         │
+         │ commits + pushes to task branch
+         │ appends: ImplementationCompleted (with branch + commit in message)
+         ▼
+QA role runs over HTTP
+         │
+         ├── approved  -> append: ReviewPassed -> append: TaskCompleted
+         └── rejected  -> append: ReviewFailed -> loop back to Engineer
 ```
 
-### Redis Key Schema
+### CSV Event Log Schema (`state/events.csv`)
 
 ```
-# Agent registration (heartbeat every 30s)
-agents:em          → "http://em-agent:8080"
-agents:em:health   → {"status":"healthy","last_heartbeat":"2026-04-17T10:00:00Z"}
-agents:engineer    → ["http://eng1:8080", "http://eng2:8080", ...]
-agents:qa          → "http://qa-agent:8080"
-
-# Task state (versioned for checkpoint/recovery)
-tasks:task-001          → {"status":"in_progress","current_group":1,...}
-tasks:task-001:breakdown → {"subtasks":[...],"groups":[...],"version":1}
-tasks:task-001:group-1  → {"status":"done","branch":"speedster/task-001/group-1"}
-tasks:task-001:subtask-N → {"status":"done","qa_rounds":2,...}
-
-# Artifacts
-tasks:task-001:group-1:diff → "<git diff between groups>"
-tasks:task-001:subtask-N:qa-N → {"approved":false,"feedback":"..."}
-
-# Performance tracking (no upper limit, just tracking)
-perf:metrics → {"total_calls":41,"total_tokens":152000,...}
-perf:calls:call-001 → {"role":"qa","model":"...","tokens":3200,"latency_ms":4500,"approved":false}
-
-# Checkpoint (for resume after crash)
-checkpoint:orchestrator → {"last_checkpoint":"2026-04-17T10:00:00Z","active_tasks":["task-001"]}
+seq,ts,task_id,event_type,role,model,message
+1,2026-04-20T10:00:00Z,task-001,TaskCreated,orchestrator,,Task accepted
+2,2026-04-20T10:01:10Z,task-001,PlanningCompleted,em,vllm/qwen3.6-35b,Plan produced
+3,2026-04-20T10:05:22Z,task-001,ImplementationCompleted,engineer,vllm/qwen3.6-35b,branch=speedster/task-001 commit=abc123
+4,2026-04-20T10:06:30Z,task-001,ReviewFailed,qa,vllm/qwen3.6-35b,Missing error handling
+5,2026-04-20T10:10:44Z,task-001,ImplementationCompleted,engineer,vllm/qwen3.6-35b,branch=speedster/task-001 commit=def456
+6,2026-04-20T10:12:02Z,task-001,ReviewPassed,qa,vllm/qwen3.6-35b,All criteria met
+7,2026-04-20T10:12:03Z,task-001,TaskCompleted,orchestrator,,Terminal state reached
 ```
 
 ## File Structure
 
 ```
-tasks/                          speedster/                    agent/
-├── task-001/                   ├── __init__.py               ├── __init__.py
-│   ├── task.json               ├── main.py                   ├── main.py        # Entry: starts ACP + HTTP server
-│   ├── context/                ├── config.py                 ├── config.py      # Role config + model + Redis
-│   │   ├── README.md           ├── orchestrator.py           ├── server.py      # HTTP API (FastAPI) wrapping OpenCode ACP
-│   │   └── ...                 ├── redis_client.py           ├── worker.py      # Redis subscriber for async work
-│   ├── breakdown.json          ├── agent_client.py           ├── git_client.py  # Clone/push to central repo
-│   ├── engineer-output/        ├── task_manager.py           ├── tools/
-│   │   └── ses_xxx/            ├── message_builder.py        │   ├── em.yaml        # Read-only + bash (analysis)
-│   │       ├── diff            ├── git_handler.py            │   ├── engineer.yaml  # Full tools (read,edit,write,bash)
-│   │       └── output.log      ├── performance_tracker.py    │   └── qa.yaml        # Read-only + bash (validation)
-│   └── qa-reviews/             ├── output_validator.py       ├── Dockerfile
-│       └── ses_yyy/            ├── checkpoint.py             └── requirements.txt
-│           └── review.json     └── utils.py
-├── task-002/
-│   ├── task.json
-│   └── context/
-│       └── ...
+tasks/                          speedster/                    agent/                    state/
+├── task-001/                   ├── __init__.py  ✅           ├── __init__.py   ✅      ├── events.csv ✅
+│   ├── task.json   ✅          ├── main.py      ✅           ├── main.py       ✅      └── snapshots/ ✅
+│   ├── context/      ✅        ├── config.py    ✅           ├── config.py     ✅
+│   │   ├── README.md ✅        ├── orchestrator.py ✅        ├── server.py     ✅
+│   │   └── ...                     ├── event_log.py    ✅        ├── git_client.py ⏳
+│   ├── breakdown.json ⏳            ├── state_projection.py ✅      ├── tools/        ✅
+│   └── ...                       ├── agent_client.py ✅          │   ├── em.yaml   ✅
+                                ├── prompt_builder.py ✅          │   ├── engineer.yaml ✅
+                                ├── git_handler.py    ⏳          │   └── qa.yaml   ✅
+                                ├── output_validator.py ✅        ├── Dockerfile    ✅
+                                ├── performance_tracker.py ⏳     └── requirements.txt ✅
+                                ├── response_parser.py  ✅
+                                ├── task_manager.py     ✅
+                                ├── events.py           ✅
+                                ├── interfaces.py       ✅
+                                ├── models.py           ✅
+                                ├── exceptions.py       ✅
+                                ├── contracts/          ✅
+                                │   ├── em_breakdown.py ✅
+                                │   ├── engineer_contract.py ✅
+                                │   └── qa_contract.py  ✅
+                                └── cli/                ✅
+                                    ├── validate_em_breakdown.py ✅
+                                    ├── validate_engineer_input.py ✅
+                                    ├── validate_engineer_output.py ✅
+                                    ├── validate_qa_input.py ✅
+                                    ├── validate_qa_output.py ✅
+                                    └── normalize_em_breakdown.py ✅
 ```
+
+**Legend:** ✅ Implemented | ⏳ Not yet implemented
+
+Additional implemented files:
+- `docker-compose.yml` ✅ (agent services only; orchestrator service pending)
+- `prompts/em_system_prompt.txt` ✅, `engineer_system_prompt.txt` ✅, `qa_system_prompt.txt` ✅
+- `schemas/*.schema.json` ✅ (5 schemas)
+- `.env.example` ✅
+- `setup.sh` ✅
+- `tests/` ✅ (12 test files)
 
 ## HTTP API (per agent container)
 
@@ -140,10 +145,6 @@ tasks/                          speedster/                    agent/
 
 ```yaml
 services:
-  redis:
-    image: redis:7-alpine
-    volumes: ["redis-data:/data"]
-
   em-agent:
     build:
       context: ./agent
@@ -151,7 +152,6 @@ services:
         - ROLE=em
         - MODEL=vllm/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q6_K
     environment:
-      - REDIS_URL=redis://redis:6379
       - GIT_SSH_KEY=/secrets/gitkey
       - TOOLS_CONFIG=/etc/opencode/tools/em.yaml
     volumes: ["gitkey:/secrets"]
@@ -163,7 +163,6 @@ services:
         - ROLE=engineer
         - MODEL=vllm/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q6_K
     environment:
-      - REDIS_URL=redis://redis:6379
       - GIT_SSH_KEY=/secrets/gitkey
       - TOOLS_CONFIG=/etc/opencode/tools/engineer.yaml
     volumes: ["gitkey:/secrets"]
@@ -177,7 +176,6 @@ services:
         - ROLE=qa
         - MODEL=vllm/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q6_K
     environment:
-      - REDIS_URL=redis://redis:6379
       - GIT_SSH_KEY=/secrets/gitkey
       - TOOLS_CONFIG=/etc/opencode/tools/qa.yaml
     volumes: ["gitkey:/secrets"]
@@ -185,19 +183,18 @@ services:
   orchestrator:
     build: ./speedster
     environment:
-      - REDIS_URL=redis://redis:6379
+      - EVENT_LOG_PATH=/app/state/events.csv
       - GIT_SSH_KEY=/secrets/gitkey
     volumes: ["gitkey:/secrets"]
     depends_on: [em-agent, engineer, qa-agent]
 
 volumes:
-  redis-data:
   gitkey:
 ```
 
 ## Module Descriptions
 
-### `speedster/config.py` - Configuration Models
+### `speedster/config.py` - Configuration Models ✅
 
 ```python
 class ModelConfig(BaseModel):
@@ -217,13 +214,14 @@ class AgentEndpoint(BaseModel):
     url: str  # e.g., "http://em-agent:8080"
     status: str = "unknown"  # "healthy", "unhealthy", "unknown"
 
-class RedisConfig(BaseModel):
-    url: str = "redis://localhost:6379"
-    max_connections: int = 10
+class EventLogConfig(BaseModel):
+    path: Path = Path("state/events.csv")
+    snapshot_dir: Path = Path("state/snapshots")
+    fsync_on_append: bool = True
 
 class AgentConfig(BaseModel):
     roles: dict[str, RoleConfig] = {"em": ..., "engineer": ..., "qa": ...}
-    redis: RedisConfig = RedisConfig()
+    event_log: EventLogConfig = EventLogConfig()
     max_qa_rounds: int = 20  # quality-first: no hard limit, but cap for safety
     context_windows: dict[str, int] = {"em": 32768, "engineer": 131072, "qa": 32768}
     task_dir: Path = Path("tasks")
@@ -231,42 +229,34 @@ class AgentConfig(BaseModel):
     track_performance: bool = True
 ```
 
-### `speedster/redis_client.py` - Redis Client
+### `speedster/event_log.py` - CSV Event Log ✅
 
-Pub/sub subscriber + KV operations + health heartbeats. Manages agent registration, task state persistence, and checkpoint saving.
-
-### `speedster/checkpoint.py` - Checkpoint Manager
-
-Formalizes Redis as a durable state machine. Every step (EM done, subtask-1 started, QA-1 done, etc.) persists to Redis with a versioned key. On restart, orchestrator scans for non-terminal tasks and resumes from the last persisted step.
+Single-writer append-only CSV store managed by the orchestrator. This is the source of truth for workflow progress.
 
 ```python
-class CheckpointManager:
-    def save_checkpoint(self, task_id, state):
-        """Save task state to Redis for crash recovery."""
-        data = {
-            "task_id": task_id,
-            "state": state,
-            "timestamp": now(),
-            "retries": self._get_retry_count(task_id, state)
-        }
-        redis.setex(f"checkpoint:{task_id}", 3600, json.dumps(data))
+class EventLog:
+    HEADER = ["seq", "ts", "task_id", "event_type", "role", "model", "message"]
 
-    def resume(self):
-        """On startup, find non-terminal tasks and resume from checkpoint."""
-        active = redis.smembers("checkpoint:orchestrator:active_tasks")
-        for task_id in active:
-            cp = redis.get(f"checkpoint:{task_id}")
-            if cp and cp["state"] not in terminal_states:
-                yield resume_from_state(task_id, cp)
+    def append(self, task_id: str, event_type: str, role: str, model: str, message: str):
+        """Append one event row and fsync for durability."""
+        ...
+
+    def replay(self):
+        """Yield events ordered by seq for state reconstruction."""
+        ...
 ```
 
-### `speedster/output_validator.py` - Output Validator
+### `speedster/state_projection.py` - Replay + Current State ✅
+
+Rebuilds current per-task state by replaying `state/events.csv`. On startup, orchestrator replays events and resumes all non-terminal tasks from their last durable event.
+
+### `speedster/output_validator.py` - Output Validator ✅
 
 Every agent output is validated against a JSON schema before the orchestrator consumes it. Invalid output triggers a retry with the error in the prompt.
 
 ```python
 class OutputValidator:
-    BREAKDOWN_SCHEMA = {...}
+    PLAN_SCHEMA = {...}
     QA_FEEDBACK_SCHEMA = {...}
     ENGINEER_SUMMARY_SCHEMA = {...}
 
@@ -281,7 +271,7 @@ class OutputValidator:
             return {"error": str(e)}  # signals retry with error message
 ```
 
-### `speedster/performance_tracker.py` - Performance Tracker
+### `speedster/performance_tracker.py` - Performance Tracker ⏳
 
 Tracks metrics per call (no budget cap, just tracking for quality analysis).
 
@@ -304,30 +294,30 @@ class PerformanceTracker:
         }
 ```
 
-### `speedster/agent_client.py` - HTTP Agent Client
+### `speedster/agent_client.py` - HTTP Agent Client ✅
 
 Client to call remote agent APIs. Handles connection pooling, retries on unhealthy agents, and health check integration.
 
-### `speedster/task_manager.py` - Task Management (Redis-backed)
+### `speedster/task_manager.py` - Task Input + Status Projection ✅
 
-Replaces filesystem-based task management. Reads/writes task state from Redis. Watches for new tasks via Redis pub/sub (no file system watching).
+Loads task definitions from `tasks/` and exposes read-model status derived from event replay. No external task tracker is required.
 
-### `speedster/git_handler.py` - Git Operations (Remote Repo)
+### `speedster/git_handler.py` - Git Operations (Remote Repo) ⏳
 
 Branch-per-group git strategy with orchestrator-managed merge.
 
 ```python
 class GitHandler:
-    def create_group_branch(self, task_id: str, group_num: int) -> str:
-        """Create isolated branch for parallel group: speedster/task-{id}/group-{n}"""
+    def create_task_branch(self, task_id: str) -> str:
+        """Create isolated branch for task execution: speedster/task-{id}"""
         ...
 
-    def merge_group(self, group_branch: str) -> bool:
-        """Merge group branch into main task branch. Returns False if conflicts."""
+    def merge_task_branch(self, task_branch: str) -> bool:
+        """Merge task branch into main. Returns False if conflicts."""
         ...
 
-    def get_group_diff(self, group_branch: str) -> str:
-        """Get git diff between groups for QA context."""
+    def get_task_diff(self, task_branch: str) -> str:
+        """Get git diff for QA context."""
         ...
 
     def clone_repo(self, branch: str, target_dir: Path):
@@ -339,11 +329,12 @@ class GitHandler:
         ...
 ```
 
-### `speedster/message_builder.py` - Prompt Assembly with Context Window Enforcement
+### `speedster/prompt_builder.py` - Prompt Assembly ✅
 
 Orchestrator constructs each agent's prompt by:
-1. Loading relevant context from Redis (breakdown.json, acceptance criteria, diffs, feedback)
-2. Embedding previous artifacts (e.g., EM's breakdown, QA's feedback)
+
+1. Loading relevant context from task files + replayed event state + git artifacts
+2. Embedding previous artifacts (e.g., EM plan, QA feedback)
 3. Respecting context window limits per role
 4. Chunking if content exceeds window
 
@@ -356,16 +347,16 @@ class MessageBuilder:
         """EM receives: system prompt + task description + targeted codebase scan results"""
         ...
 
-    def build_engineer_prompt(self, subtask: SubTask, context_files_content: dict[str, str]) -> str:
-        """Engineer receives: system prompt + subtask details + context files (chunked if needed)"""
+    def build_engineer_prompt(self, task: Task, context_files_content: dict[str, str]) -> str:
+        """Engineer receives: system prompt + task details + context files (chunked if needed)"""
         ...
 
-    def build_qa_prompt(self, subtask: SubTask, diff: str, context_files_content: dict[str, str]) -> str:
-        """QA receives: system prompt + subtask details + acceptance criteria + diff + changed files only"""
+    def build_qa_prompt(self, task: Task, diff: str, context_files_content: dict[str, str]) -> str:
+        """QA receives: system prompt + task details + acceptance criteria + diff + changed files only"""
         ...
 
-    def build_feedback_prompt(self, subtask: SubTask, qa_feedback: str, diff: str) -> str:
-        """Engineer receives: system prompt + subtask details + acceptance criteria + previous diff + QA feedback"""
+    def build_feedback_prompt(self, task: Task, qa_feedback: str, diff: str) -> str:
+        """Engineer receives: system prompt + task details + acceptance criteria + previous diff + QA feedback"""
         ...
 
     def _chunked_prompt(self, base_prompt: str, content: dict[str, str], max_tokens: int) -> list[str]:
@@ -373,94 +364,94 @@ class MessageBuilder:
         ...
 ```
 
-### `speedster/orchestrator.py` - Workflow Orchestrator (State Machine)
+### `speedster/orchestrator.py` - Workflow Orchestrator (State Machine) ✅
 
 ```python
 class Orchestrator:
     def __init__(self, config: AgentConfig):
-        self.redis = RedisClient(config.redis)
-        self.agent_client = AgentClient(self.redis)
-        self.task_manager = TaskManager(self.redis)
+        self.event_log = EventLog(config.event_log)
+        self.agent_client = AgentClient()
+        self.task_manager = TaskManager()
         self.git_handler = GitHandler()
-        self.checkpoint = CheckpointManager(self.redis)
+        self.state_projection = StateProjection(self.event_log)
         self.message_builder = MessageBuilder(config.context_windows)
         self.validator = OutputValidator()
         self.tracker = PerformanceTracker()
 
     async def run(self):
-        # 1. Connect to Redis
-        # 2. Subscribe to tasks queue
-        # 3. Load checkpoint (resume if restarted)
-        # 4. Start health check loop (ping agents every 30s)
-        # 5. Watch for new tasks (pub/sub from Redis)
+        # 1. Load/replay CSV event log
+        # 2. Resume non-terminal tasks
+        # 3. Start health check loop (ping agents every 30s)
+        # 4. Poll task directory for new tasks
 
     async def process_task(self, task: Task):
-        self.checkpoint.save(task.id, "planning")
+        self.event_log.append(task.id, "TaskCreated", "orchestrator", "", "Task accepted")
 
-        # EM breakdown (sequential, via HTTP)
-        breakdown = await self._run_em(task)
-        self.checkpoint.save(task.id, "breakdown-done")
+        # EM planning (sequential, via HTTP)
+        plan = await self._run_em(task)
+        self.event_log.append(task.id, "PlanningCompleted", "em", plan.model, "Plan produced")
 
-        # Topological sort → parallel groups
-        groups = topological_sort(breakdown.subtasks)
-
-        # Execute groups in order, groups in parallel
-        for i, group in enumerate(groups):
-            self.checkpoint.save(task.id, f"group-{i}-started")
-            await asyncio.gather(*[
-                self._process_subtask(subtask) for subtask in group
-            ])
-            # Merge group after all subtasks complete
-            merged = await self.git_handler.merge_group(f"speedster/{task.id}/group-{i}")
-            if not merged:
-                # Conflict resolution or manual intervention needed
-                self.task_manager.update_status(task.id, "conflict")
-                break
-
-            self.checkpoint.save(task.id, f"group-{i}-done")
-
-        self.checkpoint.save(task.id, "done")
-        self.task_manager.update_status(task.id, "done")
-
-    async def _process_subtask(self, subtask: SubTask):
-        # Engineer implements (via HTTP to engineer replicas)
-        engineer_result = await self._run_engineer(subtask)
-        self.checkpoint.save(subtask.id, "engineer-done")
-
-        # QA reviews with feedback loop (no hard cap, quality-first)
+        # Single task unit: engineer -> qa feedback loop
         for round_num in range(self.config.max_qa_rounds):
-            qa_result = await self._run_qa(subtask, engineer_result)
-            self.tracker.track_call("qa", qa_result.model, qa_result.tokens, qa_result.latency_ms, qa_result.approved, round_num)
-            self.checkpoint.save(subtask.id, f"qa-round-{round_num}")
+            engineer_result = await self._run_engineer(task, plan)
+            # `commit_sha` is read from git_client after the agent's push; the
+            # agent itself does NOT self-report a SHA in its JSON response.
+            self.event_log.append(
+                task.id,
+                "ImplementationCompleted",
+                "engineer",
+                engineer_result.model,
+                f"branch={engineer_result.branch} commit={engineer_result.commit_sha}",
+            )
 
+            qa_result = await self._run_qa(task, engineer_result)
+            self.tracker.track_call("qa", qa_result.model, qa_result.tokens, qa_result.latency_ms, qa_result.approved, round_num)
             if qa_result.approved:
-                self.task_manager.update_subtask_status(subtask.id, "done")
+                self.event_log.append(task.id, "ReviewPassed", "qa", qa_result.model, "All acceptance criteria met")
+                self.event_log.append(task.id, "TaskCompleted", "orchestrator", "", "Terminal state reached")
                 break
 
-            # Feedback: engineer re-implements
-            subtask.feedback = qa_result.feedback
-            engineer_result = await self._run_engineer(subtask)
-            self.checkpoint.save(subtask.id, f"engineer-fix-{round_num}")
+            self.event_log.append(task.id, "ReviewFailed", "qa", qa_result.model, qa_result.feedback)
         else:
-            # Max rounds exceeded — task rejected
-            self.task_manager.update_subtask_status(subtask.id, "rejected")
+            self.event_log.append(task.id, "TaskFailed", "orchestrator", "", "Max QA rounds exceeded")
 ```
 
-### `agent/server.py` - HTTP API Server
+### `agent/server.py` - HTTP API Server ✅
 
 FastAPI server exposing `/work` and `/health` endpoints. Wraps OpenCode ACP calls.
 
-### `agent/worker.py` - Redis Subscriber
+### `agent/worker.py` - Optional Local Queue Worker ⏳
 
-Background worker that subscribes to Redis pub/sub channels for work items. Picks up tasks and delegates to `/work` endpoint.
+Optional helper for local queue mode only. It is not required for the base HTTP-orchestrated workflow.
 
-### `agent/git_client.py` - Git Client
+### `agent/git_client.py` - Git Client ⏳
 
-Handles clone/push operations into the central repo. Configured with SSH key for authentication. Each agent clones the repo on startup and pushes changes after each subtask.
+Handles clone/push operations into the central repo. Configured with SSH key for authentication. Each agent clones the repo on startup and pushes changes after each task attempt.
 
-### `agent/main.py` - Entry Point
+### `agent/main.py` - Entry Point ✅
 
-Starts the OpenCode ACP server + HTTP API server + Redis heartbeat. Configurable via environment variables (`ROLE`, `MODEL`, `REDIS_URL`).
+Starts the OpenCode ACP server + HTTP API server. Configurable via environment variables (`ROLE`, `MODEL`).
+
+### Additional Implemented Modules
+
+The following modules are not described in this plan's original spec but have been implemented as part of the vertical slice:
+
+- **`speedster/events.py`** ✅ — `EventType` enum, phase transitions, terminal event constants
+- **`speedster/interfaces.py`** ✅ — `EventStore` and `AgentGateway` protocols for dependency injection
+- **`speedster/models.py`** ✅ — `StepResult` dataclass for structured role output
+- **`speedster/exceptions.py`** ✅ — Exception hierarchy (`ValidationError`, `OrchestratorError`, etc.)
+- **`speedster/response_parser.py`** ✅ — JSON parsing + QA response to `StepResult` conversion
+- **`speedster/contracts/`** ✅ — Schema validation modules (`em_breakdown.py`, `engineer_contract.py`, `qa_contract.py`)
+- **`speedster/cli/`** ✅ — Standalone CLI validators (6 scripts referenced as `tools/` in Prompt Design section)
+
+## Harness run input (target repository)
+
+The **target repository** is not part of `task.json` or the EM `breakdown.json`. It is supplied by the **harness** when a run is started, alongside the initial task, as:
+
+- `**repo.url`** — Git clone URL (HTTPS or SSH) for the codebase under work.
+- `**repo.default_branch`** — The integration line for this run (e.g. `main`, `develop`). After clone, check out the corresponding remote-tracking branch (e.g. `origin/<default_branch>`); all orchestrator-managed `speedster/<task-id>` branches are created from that base unless the plan specifies otherwise.
+
+The orchestrator records `repo.url` and `repo.default_branch` in durable state (e.g. in the `TaskCreated` event message or a small run header the replay path understands) so recovery and audits know which remote and base branch were used. Agent JSON payloads to Engineer and QA still use `repo.branch` (always `speedster/...` on the task) and `repo.root` (absolute path inside the container) as defined in the input schemas; they do not embed the clone URL or default branch.
 
 ## Task File Format
 
@@ -473,38 +464,53 @@ Starts the OpenCode ACP server + HTTP API server + Redis heartbeat. Configurable
   "description": "Add user authentication endpoint with JWT tokens",
   "priority": "high",
   "created_at": "2025-01-15T10:00:00Z",
-  "model_override": null,
-  "checkpoint": null
+  "model_override": null
 }
 ```
 
 ### `tasks/task-001/breakdown.json` (generated by EM)
 
+The EM emits a recursive task tree rooted at a single Task object. The full
+contract is in `schemas/em_breakdown.schema.json`; every node carries the
+implementation-ready fields, and non-leaf nodes nest children under `tasks`.
+Illustrative shape:
+
 ```json
 {
-  "task_id": "task-001",
-  "subtasks": [
+  "id": "task-001",
+  "description": "Add user authentication endpoint with JWT tokens.",
+  "acceptance_criteria": {
+    "functional": ["Login endpoint returns a JWT on valid credentials."],
+    "solid": "The implementation adheres to SOLID principles by separating token issuance from the request handler.",
+    "yagni_kiss": "The implementation adheres to YAGNI and KISS by reusing the existing config loader instead of adding a JWT-specific one.",
+    "testing": "Well-designed unit tests cover token issuance and 401 handling, with minimum unit test coverage of 80%+ for touched modules."
+  },
+  "context_files": ["src/auth/__init__.py", "src/routes/auth.py", "src/config.py"],
+  "context_rationale": "Only these modules need to change to add the JWT login endpoint.",
+  "depends_on": [],
+  "estimated_context_tokens": 6000,
+  "estimated_work_tokens": 20000,
+  "complexity_level": "straightforward",
+  "target_model_class": "mid-size-25B",
+  "status": "pending",
+  "qa_rounds": 0,
+  "feedback": null,
+  "tasks": [
     {
-      "id": "task-001-1",
-      "description": "Create JWT authentication service module",
-      "acceptance_criteria": ["Token generation", "Token validation", "Expiration handling"],
-      "context_files": ["src/auth/", "src/config.py"],
+      "id": "task-001-issuer",
+      "description": "Add JWT issuer service with deterministic clock injection.",
+      "acceptance_criteria": { "...": "..." },
+      "context_files": ["src/auth/issuer.py"],
+      "context_rationale": "Isolated module for token issuance.",
       "depends_on": [],
-      "parallel_group": 0,
+      "estimated_context_tokens": 2000,
+      "estimated_work_tokens": 8000,
+      "complexity_level": "simple",
+      "target_model_class": "mid-size-25B",
       "status": "pending",
       "qa_rounds": 0,
-      "feedback": null
-    },
-    {
-      "id": "task-001-2",
-      "description": "Create /api/auth/login endpoint",
-      "acceptance_criteria": ["Accepts credentials", "Returns JWT", "Returns 401 on failure"],
-      "context_files": ["src/routes/", "src/auth/"],
-      "depends_on": ["task-001-1"],
-      "parallel_group": 1,
-      "status": "pending",
-      "qa_rounds": 0,
-      "feedback": null
+      "feedback": null,
+      "tasks": []
     }
   ]
 }
@@ -515,223 +521,280 @@ Starts the OpenCode ACP server + HTTP API server + Redis heartbeat. Configurable
 ```
 Orchestrator starts
        │
-       ├── 1. Connect to Redis
-       ├── 2. Subscribe to tasks queue
-       ├── 3. Load checkpoint (resume if restarted)
-       └── 4. Start health check loop (ping agents every 30s)
+       ├── 1. [x] Replay `state/events.csv` (state_projection.py)
+       ├── 2. [x] Reconstruct current state for non-terminal tasks
+       ├── 3. [ ] Start agent health check loop
+       └── 4. [x] Pick pending task from `tasks/`
                │
                ▼
-New task detected (watch or Redis pub/sub)
+Append `TaskCreated` event  ✅
        │
        ▼
-┌─────────────────────────────────────────────┐
-│ MessageBuilder.build_em_prompt()             │
-│  - Orchestrator scans relevant files first   │
-│  - Passes targeted subset to EM              │
-│  - Respects EM's context window              │
-│  - Sends via HTTP → em-agent:8080/work       │
-└──────────┬────────────────────────────────────┘
-           │
-           ▼
-┌─────────────┐
-│   EM role    │  ← HTTP → em-agent:8080/work
-│  breakdown   │     Reads relevant files via OpenCode tools
-│             │     Writes breakdown.json to output
-└──────┬──────┘
-       │ Orchestrator receives output
+Run EM via HTTP (`/work`)  ✅
        │
-       ├── Validate against JSON schema
-       │     └── Invalid? Retry with error in prompt
+       ├── [x] Validate EM output schema
+       └── [x] Append `PlanningCompleted`
+               │
+               ▼
+Run Engineer via HTTP (`/work`)  ✅
        │
-       ├── Save checkpoint to Redis
+       ├── [ ] Engineer pushes branch commit (blocked on git integration)
+       └── [x] Append `ImplementationCompleted` *(branch + commit SHA pending git)*
+               │
+               ▼
+Run QA via HTTP (`/work`)  ✅
        │
-       ▼
-┌──────────────────┐
-│  Topological sort │
-│  → parallel groups│
-└──────┬───────────┘
-       │
-       ▼
-┌─────────────────────────────────────────────┐
-│  Group N (subtasks with no unmet deps)      │
-│                                             │
-│  GitHandler.create_group_branch()           │
-│  Creates: speedster/task-XXX/group-N        │
-│                                             │
-│  ┌──────────────────────┐ ┌──────────────┐  │
-│  │ MessageBuilder.build │ │ MessageBuild │  │
-│  │ _engineer_prompt()   │ │ er.build()   │  │  ← Parallel via replicas
-│  └──────────┬───────────┘ └──────┬───────┘  │
-│             │                    │           │
-│             ▼                    ▼           │
-│  ┌──────────┐    ┌──────────┐               │
-│  │ Engineer │    │ Engineer │    ...        │  ← HTTP → replicas
-│  │ (sub 1)  │    │ (sub 2)  │               │
-│  └────┬─────┘    └────┬─────┘               │
-│       │ works on       │                      │
-│       │ group branch   │                      │
-│       │ pushes to repo │                      │
-│  ┌────▼─────┐    ┌────▼─────┐               │
-│  │MessageBuild│  │MessageBuild│              │
-│  │er.build_qa│  │er.build_qa│               │
-│  │_prompt()  │  │_prompt()  │               │
-│  └────┬─────┘    └────┬─────┘               │
-│       │               │                      │
-│  ┌────▼─────┐    ┌────▼─────┐               │
-│  │   QA     │    │   QA     │    ...        │  ← HTTP → qa-agent
-│  │ review   │    │ review   │               │
-│  └────┬─────┘    └────┬─────┘               │
-│       │ writes:      │                      │
-│       │ qa-reviews/  │                      │
-│       │ to Redis     │                      │
-│  ┌────▼─────┐    ┌────▼─────┐               │
-│  │Approved? │    │Approved? │               │
-│  └────┬─────┘    └────┬─────┘               │
-│ Yes──┘│              │┌───┘ No               │
-│       ▼              ▼                       │
-│  ┌─────────────────────────┐                 │
-│  │  Feedback loop           │                 │
-│  │  (max 20 rounds,         │                 │
-│  │   quality-first)         │                 │
-│  │                         │                 │
-│  │  MessageBuilder.build   │                 │
-│  │  _feedback_prompt()     │                 │
-│  │  (diff + QA feedback)   │                 │
-│  │         │               │                 │
-│  │         ▼               │                 │
-│  │  ┌──────────┐          │                 │
-│  │  │ Engineer │          │                 │
-│  │  │ re-fix   │          │                 │
-│  │  └────┬─────┘          │                 │
-│  │       │                │                 │
-│  │  ┌────▼─────┐          │                 │
-│  │  │   QA     │          │                 │
-│  │  │ review   │          │                 │
-│  │  └────┬─────┘          │                 │
-│  └───────┼────────────────┘                 │
-│          │                                   │
-│          ▼ Group N complete                  │
-│          GitHandler.merge_group()            │
-│          (resolve conflicts or fail)         │
-│          Save checkpoint to Redis            │
-└──────────┼──────────────────────────────────┘
-           │
-           ▼
-┌─────────────┐
-│  Checkpoint  │  ← Save final state to Redis
-│  + notify    │
-└─────────────┘
+       ├── [x] Review passed  -> append `ReviewPassed`, then `TaskCompleted`
+       └── [x] Review failed  -> append `ReviewFailed`, loop to Engineer
 ```
 
 ## Error Handling
 
-- **Process timeout**: Kill agent after timeout_seconds (default 600 for multi-hour ops), mark subtask as `rejected` with timeout details
-- **Model errors**: Handled by OpenCode internally; orchestrator checks for empty output and retries with exponential backoff (3 attempts)
-- **Context overflow**: MessageBuilder enforces context window per role; if content exceeds window, chunks are sent sequentially
-- **Git conflicts**: On merge, if conflicts exist, marks task as `conflict` (not rejected) — user can inspect branch
-- **Deadlock detection**: If topological sort detects cycles in subtask dependencies, logs error and rejects task
-- **Agent health failure**: Orchestrator pings agents every 30s; unhealthy agents are retried with a different replica or flagged
-- **Invalid output**: OutputValidator checks JSON schema; invalid output triggers retry with error message in prompt
-- **Crash recovery**: CheckpointManager persists state after each step; on restart, orchestrator resumes from last checkpoint
-- **Redis failure**: Orchestrator fails fast with clear error message (no silent degradation)
+- [ ] **Process timeout**: Kill agent after timeout_seconds (default 600), append `TaskFailed` with timeout details
+- [ ] **Model errors**: Handled by OpenCode internally; orchestrator checks for empty output and retries with exponential backoff (3 attempts)
+- [ ] **Context overflow**: MessageBuilder enforces context window per role; if content exceeds window, chunks are sent sequentially
+- [ ] **Git conflicts**: On merge/rebase failure, append `TaskFailed` with conflict details and keep branch for inspection
+- [ ] **Agent health failure**: Orchestrator pings agents every 30s; unhealthy agents are retried with a different replica or flagged
+- [x] **Invalid output**: OutputValidator checks JSON schema; invalid output triggers retry with error message in prompt
+- [x] **Crash recovery**: Event replay restores durable state; in-flight uncommitted edits are discarded by design *(resume logic exists via `speedster main.py resume`)*
+- [x] **Event log write failure**: Orchestrator fails fast; no transition is considered complete until event append succeeds
 
 ## Prompt Design (system prompts for agents)
 
-Agents are configured with these system prompts:
+Each role has exactly one authoritative system prompt file under `prompts/`; these files are the single source of truth and override anything phrased in this plan.
 
-### EM Agent
-```
-You are an Engineering Manager. Given a task description and the codebase,
-break it down into independent subtasks that can be parallelized.
+- [x] EM: `[prompts/em_system_prompt.txt](prompts/em_system_prompt.txt)` — output validated by `[schemas/em_breakdown.schema.json](schemas/em_breakdown.schema.json)` via `[speedster/cli/validate_em_breakdown.py](speedster/cli/validate_em_breakdown.py)`.
+- [x] Engineer: `[prompts/engineer_system_prompt.txt](prompts/engineer_system_prompt.txt)` — input validated by `[schemas/engineer_input.schema.json](schemas/engineer_input.schema.json)` and output by `[schemas/engineer_output.schema.json](schemas/engineer_output.schema.json)`, both enforced by `[speedster/contracts/engineer_contract.py](speedster/contracts/engineer_contract.py)` (CLIs `speedster/cli/validate_engineer_input.py`, `speedster/cli/validate_engineer_output.py`).
+- [x] QA: `[prompts/qa_system_prompt.txt](prompts/qa_system_prompt.txt)` — input validated by `[schemas/qa_input.schema.json](schemas/qa_input.schema.json)` and output by `[schemas/qa_output.schema.json](schemas/qa_output.schema.json)`, both enforced by `[speedster/contracts/qa_contract.py](speedster/contracts/qa_contract.py)` (CLIs `speedster/cli/validate_qa_input.py`, `speedster/cli/validate_qa_output.py`).
 
-Rules:
-- Each subtask must fit within context window limits
-- Identify explicit dependencies between subtasks
-- Group independent subtasks for parallel execution
-- Define clear, testable acceptance criteria for each
-- List only files that are relevant context
-- Optimize for maximum parallel group count
+Orchestrator contracts that the prompts rely on:
 
-Output: a structured JSON breakdown with subtasks, dependencies, and acceptance criteria.
-```
+- Task ids are restricted to `[A-Za-z0-9._-]+` (git-ref-safe) by the EM schema; `repo.branch` is always `speedster/<root-task-id>`.
+- **Execution semantics**: every task in the EM breakdown tree — leaf or non-leaf — is dispatched to the Engineer as exactly one invocation. A task becomes schedulable once every descendant has been implemented AND every `depends_on` target has been implemented. Non-leaf tasks are *integration* tasks: their commit wires already-implemented descendants together. Leaves are dispatched first (post-order); the root is dispatched last. The parent/child edge is an implicit structural dependency; `depends_on` therefore never names ancestors or descendants. The validator enforces all of this.
+- Each Engineer invocation appends exactly one commit on `repo.branch` with message `<task_id>: <short imperative summary>` (optionally suffixed  `(round <N>)` for rework rounds). No amend, no force-push.
+- QA's diff baseline for a dispatched task is `<prev-HEAD>..HEAD` of the task branch — the Engineer's newest commit only, not the cumulative diff of the subtree. The orchestrator owns squash-on-merge at root completion.
+- The orchestrator reads the post-push HEAD from git; the Engineer does NOT self-report `commit_sha`.
+- `status: "needs_context"` on the Engineer output is a first-class back-channel: the orchestrator re-dispatches EM planning with the requested paths added to `context_files`, rather than terminating the task. `status: "blocked"` is terminal for the task node and requires human or re-plan intervention.
+- QA input carries the task node, the post-push `commit` SHA, the `<prev-HEAD>..HEAD` `diff`, the Engineer's JSON output for that commit, and the 1-based `round` counter. QA input schema guarantees `engineer_output.status == "implemented"`; the orchestrator never dispatches QA on `blocked` or `needs_context` outputs.
+- QA output maps to event-log transitions deterministically: `status: "approved"` appends `ReviewPassed` and then `TaskCompleted`; `status: "rejected"` appends `ReviewFailed` and re-dispatches the Engineer with `prior_feedback.items = qa_output.rejection_reasons` and `prior_feedback.round = qa_output.round + 1`. The QA `rejection_reasons` list is consumed verbatim and satisfies the Engineer input schema's per-item length and count constraints.
+- A single non-`met` verdict in any QA finding (functional/solid/yagni_kiss/testing) forces `status: "rejected"`; the structural validator rejects approval-with-uncertain outputs so the quality-first invariant is enforced end-to-end.
+- Flavor-specific Engineer prompt overlays (backend/frontend/mobile/data-ML) are intentionally deferred; they will be reintroduced only when a concrete iteration requires a second prompt surface.
 
-### Engineer Agent
-```
-You are a Software Engineer. Implement the following subtask.
+## Implementation Iterations
 
-Input:
-- Subtask description
-- Acceptance criteria (must all be met)
-- Context files (relevant code to read)
+Each iteration must ship a usable increment, not just scaffolding. The core value is preserved from Iteration 1 onward: **EM, Engineer, and QA are separate roles with independently configurable models**.
 
-Your workflow:
-1. Read the context files listed
-2. Implement the changes using file edits
-3. Report what was changed and how each acceptance criterion is met
+**Current status overview:** Iterations 1 and 2 are largely implemented. Iteration 3 (Git) is the primary blocker for a fully functional deploy. Iterations 4-5 are pending. Iteration 6 CLI has been pulled forward and is implemented.
 
-Use your tools: read, edit, write, bash, grep, glob.
+| Iteration | Status | Key blocker |
+|-----------|--------|-------------|
+| 1: Vertical Slice | ~95% | OpenCode ACP integration (agent server in mock mode) |
+| 2: Durable State | ~80% | Crash recovery validation, health heartbeat |
+| 3: Git Integration | 0% | `agent/git_client.py`, `speedster/git_handler.py` missing |
+| 4: Parallelism | 0% | Deferred |
+| 5: Context + Quality | ~10% | Context window enforcement, performance tracker |
+| 6: Operations + DX | ~60% | Docker Compose orchestrator service, AGENTS.md, deployment docs |
 
-IMPORTANT: You are working on a shared branch. Only modify files relevant to your subtask.
-Push your changes to the branch after completing.
-```
+### Iteration 1: Vertical Slice (single task, single engineer)
 
-### QA Agent
-```
-You are a QA Engineer. Review the implementation against:
-1. Acceptance criteria - are ALL criteria met?
-2. Code quality - patterns, edge cases, error handling, style
+Goal: prove the full EM -> Engineer -> QA loop works end-to-end with three different role models.
 
-Your workflow:
-1. Read the context files and the implementation changes (via diff)
-2. Check each acceptance criterion explicitly
-3. Review code quality
+**Status:** ~95% complete. All modules implemented and tested with 208 passing tests (including E2E HTTP tests). Blocked on OpenCode ACP integration — agent server currently returns mock responses.
 
-Output: approved: true/false with specific actionable feedback (no vague comments).
-If approved: false, provide numbered feedback items the engineer can act on.
+Execution plan: to be regenerated by the EM agent against the current recursive schema at `schemas/em_breakdown.schema.json` and committed under `tasks/<task-id>/breakdown.json` when the orchestrator is available.
 
-Use your tools: read, grep, glob, bash.
+High-level requirements:
 
-IMPORTANT: You only receive the diff + changed files, not the entire codebase.
-```
+- [x] `pyproject.toml` and minimal dependencies (`pydantic`, `httpx`, `fastapi`, `uvicorn`, `typer`)
+- [x] `speedster/config.py` with explicit per-role model mapping (`em.model`, `engineer.model`, `qa.model`)
+- [x] `agent/server.py` exposing `/work` and `/health` only (single transport path)
+- [x] `speedster/agent_client.py` for orchestrator -> agent HTTP calls
+- [x] `speedster/output_validator.py` with strict schemas for EM plan and QA review output
+- [x] `speedster/orchestrator.py` minimal state machine: one task -> QA approve/rework loop
+- [x] `speedster/event_log.py` append-only CSV event writer + replay reader
+- [x] `tasks/task-001/task.json` and one concrete example scenario
+- [ ] End-to-end test: task is completed only when QA approves acceptance criteria *(test infrastructure exists; blocked on OpenCode ACP integration — agent server in mock mode)*
 
-## Implementation Phases
+Exit criteria:
 
-### Phase 1: Core Infrastructure + Redis State Machine
-- [ ] `pyproject.toml` with dependencies (`pydantic`, `typer`, `rich`, `watchfiles`, `aiofiles`, `httpx`, `redis`, `fastapi`, `uvicorn`)
-- [ ] `speedster/config.py` - Pydantic models (config, roles, model mapping, context windows, Redis config)
-- [ ] `speedster/redis_client.py` - Pub/sub + KV + heartbeat management
-- [ ] `speedster/checkpoint.py` - Crash recovery state machine
-- [ ] `speedster/output_validator.py` - JSON schema validation
-- [ ] `speedster/performance_tracker.py` - Metrics collection (no budget cap)
+- [x] Distinct models are actually invoked per role and recorded in logs/metrics
+- [x] A single failed QA round can be fed back to Engineer and then pass on next attempt
 
-### Phase 2: Agent Container + Communication
-- [ ] `agent/server.py` - HTTP API (FastAPI) wrapping OpenCode ACP
-- [ ] `agent/worker.py` - Redis subscriber for async work
-- [ ] `agent/git_client.py` - Clone/push to central repo
-- [ ] `agent/config.py` - Role-specific tool permissions + model config
-- [ ] `speedster/agent_client.py` - HTTP client to call remote agents
-- [ ] `agent/Dockerfile` - Container image with OpenCode + agent code
-- [ ] `agent/requirements.txt`
+### Iteration 2: Durable State + Recovery
 
-### Phase 3: Task Management + Git
-- [ ] `speedster/task_manager.py` - Redis-backed task state
-- [ ] `speedster/git_handler.py` - Branch-per-group, merge conflict resolution
-- [ ] `speedster/message_builder.py` - Prompt assembly with context window enforcement + chunking
-- [ ] `speedster/utils.py` - Token counting, topological sort, targeted scanning
-- [ ] Task directory structure + example task in `tasks/`
+Goal: make the system restart-safe for multi-hour operation.
 
-### Phase 4: Roles + Orchestration
-- [ ] `speedster/orchestrator.py` - Full workflow engine (EM → parallel groups → QA loop → merge)
-- [ ] Role integration (EM orchestrates breakdown, Engineer orchestrates implementation, QA orchestrates review loop)
-- [ ] Health check integration
+**Status:** Core logic implemented. `state_projection.py` and resume logic exist and are wired into the CLI. Crash recovery not yet validated with real scenarios. Health heartbeat missing.
 
-### Phase 5: CLI + Docker
-- [ ] `speedster/main.py` - CLI with typer (`run`, `list`, `init`, `reset`)
-- [ ] `docker-compose.yml`
-- [ ] `agent/Dockerfile`
-- [ ] Integration test: end-to-end single task
+- [x] `speedster/state_projection.py` to rebuild per-task state from `state/events.csv`
+- [x] `state/snapshots/` optional periodic state snapshots for faster startup *(directory exists)*
+- [x] Resume logic in orchestrator startup (recover non-terminal tasks) *(via `speedster main.py resume`)*
+- [ ] Health heartbeat for agents and orchestrator
+- [x] Failure handling for agent timeout, invalid output, and temporary network failures *(invalid output retry and httpx retries implemented)*
 
-### Phase 6: Polish
-- [ ] Update `README.md` with agent documentation
-- [ ] Example task + breakdown in `tasks/`
-- [ ] `AGENTS.md` for ongoing agent instructions
+Exit criteria:
+
+- [ ] Kill orchestrator mid-task, restart, and continue from last persisted step *(resume logic exists but not crash-tested)*
+- [ ] No task duplication or lost progress across restart
+
+### Iteration 3: Git Integration + Deterministic Merge
+
+Goal: produce auditable code artifacts with predictable merge behavior.
+
+- [ ] `agent/git_client.py` clone/push support using configured credentials
+- [ ] `speedster/git_handler.py` with branch-per-task for deterministic isolation
+- [ ] Orchestrator merge flow: approved task branch -> main branch serially
+- [ ] Persist diff artifacts for QA context and audit trail
+
+Exit criteria:
+
+- [ ] Branch model validated across repeated task runs
+- [ ] Merge conflicts are surfaced clearly and task status moves to `conflict` without corruption
+
+### Iteration 4: Controlled Parallelism
+
+Goal: increase throughput while keeping correctness stable.
+
+- [ ] Optional batching of multiple tasks in FIFO priority order
+- [ ] Multiple engineer replicas and queueing strategy
+- [ ] Parallel execution of independent tasks
+- [ ] Global concurrency cap so review quality remains stable
+
+Exit criteria:
+
+- [ ] Two or more independent tasks run concurrently and complete correctly
+- [ ] Per-task QA loop remains isolated under concurrency
+
+### Iteration 5: Context Management + Quality Hardening
+
+Goal: improve correctness at scale without unnecessary complexity.
+
+- [ ] `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly *(PromptBuilder exists but lacks context window enforcement and chunking)*
+- [ ] Chunking/summarization protocol for overflow cases (with deterministic handoff format)
+- [ ] `speedster/performance_tracker.py` for per-role metrics (tokens, latency, QA rounds, approval rate)
+- [ ] Integration and regression tests for retry, resume, and QA feedback loops
+
+Exit criteria:
+
+- [ ] Large tasks no longer fail due to context overflow
+- [ ] Metrics show model usage by role and QA loop behavior over time
+
+### Iteration 6: Operations + Developer Experience
+
+Goal: production usability and maintainability.
+
+**Status:** CLI fully implemented and pulled forward from Iteration 6. Docker Compose has agent services but is missing the orchestrator service. AGENTS.md not yet created.
+
+- [x] `speedster/main.py` CLI (`run`, `list`, `resume`, `status`)
+- [ ] `docker-compose.yml` for local multi-container deployment *(agent services only; orchestrator service missing)*
+- [ ] Documentation (`README.md`, task format docs, troubleshooting) *(README covers setup; deployment guide incomplete)*
+- [ ] `AGENTS.md` with role prompt governance and operating guardrails
+
+Exit criteria:
+
+- [ ] New user can boot system and run a sample task from docs
+- [ ] Operator can inspect status, resume failed runs, and diagnose conflicts quickly
+
+## Iteration Checklists
+
+Use these as release gates. An iteration is complete only when all checklist items are checked.
+
+### Iteration 1 Checklist (Vertical Slice)
+
+#### Build Checklist
+
+- [x] Role configs support different models for `em`, `engineer`, and `qa`
+- [x] Agent HTTP server responds on `/work` and `/health`
+- [x] Orchestrator can execute EM -> Engineer -> QA loop for one task
+- [x] Output validator rejects malformed EM/Engineer/QA JSON and triggers retry (EM: `speedster/cli/validate_em_breakdown.py`; Engineer: `speedster/cli/validate_engineer_output.py`; QA: `speedster/cli/validate_qa_output.py`)
+- [x] Example task input exists and can be executed end-to-end
+
+#### Acceptance Checklist
+
+- [x] Logs show distinct model identifier used per role in a single run
+- [x] QA can reject implementation with actionable feedback
+- [x] Engineer can re-run with QA feedback and produce updated output
+- [x] Task is marked `done` only after QA approval
+- [ ] End-to-end run is reproducible across at least 2 consecutive runs *(blocked on OpenCode ACP integration — agent server currently in mock mode)*
+
+### Iteration 2 Checklist (Durable State + Recovery)
+
+#### Build Checklist
+
+- [x] Task state is persisted durably in CSV event log
+- [x] Event log schema stays stable and append-only
+- [x] Orchestrator startup includes resume/recovery path (`speedster/main.py resume`, `orchestrator.py resume_from_step()`)
+- [ ] Agent and orchestrator heartbeat/health status is persisted
+- [x] Timeout and transient network error paths are handled deterministically (`_run_with_retry`, `AgentClient` with httpx retries)
+
+#### Acceptance Checklist
+
+- [ ] Forced orchestrator crash mid-task resumes from last durable event *(resume logic exists but crash recovery not validated)*
+- [ ] No duplicate terminal completion events after restart
+- [ ] No task state regression (cannot move backward to invalid state)
+- [ ] Recovery behavior validated on at least 3 restart scenarios
+
+### Iteration 3 Checklist (Git Integration + Deterministic Merge)
+
+#### Build Checklist
+
+- [ ] Agents can clone/pull/push with configured credentials
+- [ ] Branch naming is per-task and unique
+- [ ] Approved task branches merge serially into main branch
+- [ ] Diff artifacts are persisted for QA/audit consumption
+- [ ] Conflict state transition is explicit and queryable
+
+#### Acceptance Checklist
+
+- [ ] Two independent tasks produce isolated branches without cross-contamination
+- [ ] Conflicting changes produce `conflict` status without data loss
+- [ ] Non-conflicting tasks merge in deterministic order
+- [ ] Audit trail links task -> branch -> diff -> QA decision
+
+### Iteration 4 Checklist (Controlled Parallelism)
+
+#### Build Checklist
+
+- [ ] Task queue scheduling enforces deterministic dispatch order
+- [ ] Engineer worker selection/queueing supports concurrent tasks
+- [ ] Concurrency caps prevent over-scheduling
+- [ ] Shared state updates are concurrency-safe
+
+#### Acceptance Checklist
+
+- [ ] At least 2 independent tasks run truly in parallel
+- [ ] Each task preserves internal order: planning -> implementing -> reviewing
+- [ ] Parallel runs produce stable final task state across repeated runs
+- [ ] Throughput improves vs Iteration 3 baseline without correctness regressions
+
+### Iteration 5 Checklist (Context + Quality Hardening)
+
+#### Build Checklist
+
+- [ ] Prompt builder applies role-specific context window limits *(PromptBuilder exists but context window enforcement not implemented)*
+- [ ] Overflow strategy (chunk/summarize) uses deterministic handoff format
+- [ ] Performance tracker records per-role tokens/latency/approval metrics *(module missing)*
+- [x] Retry and QA feedback loop tests cover failure and success paths *(tests pass)*
+
+#### Acceptance Checklist
+
+- [ ] Large-context task completes without context-overflow failure
+- [ ] QA loop metrics are queryable by task and by role
+- [ ] Retry behavior does not create duplicate state transitions
+- [ ] Regression suite passes for retry/resume/QA feedback scenarios
+
+### Iteration 6 Checklist (Operations + DX)
+
+#### Build Checklist
+
+- [x] CLI commands implemented: `run`, `list`, `resume`, `status`
+- [ ] Local deployment via `docker-compose.yml` works from clean checkout *(agent services only; orchestrator service missing)*
+- [ ] Documentation includes setup, sample run, and failure recovery steps *(README covers setup; deployment guide incomplete)*
+- [ ] `AGENTS.md` defines prompt and behavior guardrails by role
+
+#### Acceptance Checklist
+
+- [ ] New developer can complete first run via docs in one session
+- [ ] Operator can identify blocked/conflict tasks from CLI status output
+- [ ] Resume workflow is validated and documented with example
+- [ ] Troubleshooting guidance covers top 5 likely operational failures

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speedster/schemas/engineer-output.schema.json",
+  "title": "Engineer Agent Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "status",
+    "branch",
+    "files_changed",
+    "tests_added_or_updated",
+    "acceptance_evidence",
+    "assumptions",
+    "notes",
+    "blocked_reason",
+    "requested_context"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["implemented", "blocked", "needs_context"]
+    },
+    "branch": {
+      "type": "string",
+      "pattern": "^speedster/[A-Za-z0-9._-]+$"
+    },
+    "files_changed": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "tests_added_or_updated": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "acceptance_evidence": {
+      "$ref": "#/$defs/acceptanceEvidence"
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 280
+    },
+    "blocked_reason": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "requested_context": {
+      "type": "array",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "acceptanceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["functional", "solid", "yagni_kiss", "testing"],
+      "properties": {
+        "functional": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["criterion", "evidence"],
+            "properties": {
+              "criterion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "solid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "yagni_kiss": {
+          "type": "string",
+          "minLength": 1
+        },
+        "testing": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

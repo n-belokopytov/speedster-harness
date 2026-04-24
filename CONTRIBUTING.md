@@ -48,7 +48,12 @@ See [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
    git clone https://github.com/YOUR_USERNAME/speedster-harness.git
    cd speedster-harness
    ```
-3. **Create a feature branch**:
+3. **Run setup**:
+   ```bash
+   ./setup.sh
+   source .venv/bin/activate
+   ```
+4. **Create a feature branch**:
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -104,7 +109,9 @@ docs: expand troubleshooting section
 ### Testing
 
 Before submitting:
-- Run `bash -n opencode-setup.sh` for syntax validation
+- Run `bash -n opencode-setup.sh` and `bash -n setup.sh` for syntax validation
+- Run `./setup.sh --skip-validate` to install dependencies
+- Run `pytest tests/ -v` for the full test suite
 - Test with your vLLM setup if possible
 - Verify backup functionality works correctly
 - Check file permissions are set correctly

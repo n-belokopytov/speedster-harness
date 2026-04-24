@@ -1,0 +1,160 @@
+{
+  "id": "iter1",
+  "description": "Complete Iteration 1 Vertical Slice: OpenCode ACP integration and end-to-end reproducibility",
+  "acceptance_criteria": {
+    "functional": [
+      "Agent server processes messages through real OpenCode ACP instead of mock responses",
+      "Full EM -> Engineer -> QA loop completes with real model invocations",
+      "End-to-end run is reproducible across at least 2 consecutive runs"
+    ],
+    "solid": "The implementation adheres to SOLID principles by isolating OpenCode ACP communication behind a dedicated client module separate from the HTTP server.",
+    "yagni_kiss": "The implementation adheres to YAGNI and KISS by leveraging the existing opencode CLI subprocess interface without introducing a new transport layer.",
+    "testing": "Well-designed unit tests cover ACP client lifecycle and full E2E loop with real model, with minimum unit test coverage of 80%+ for touched modules."
+  },
+  "context_files": [
+    "agent/Dockerfile",
+    "agent/config.py",
+    "agent/main.py",
+    "agent/server.py",
+    "opencode-setup.sh"
+  ],
+  "context_rationale": "These files define the agent server, configuration, entry point, container setup, and OpenCode CLI bootstrap needed for ACP integration.",
+  "depends_on": [],
+  "estimated_context_tokens": 8000,
+  "estimated_work_tokens": 5000,
+  "complexity_level": "straightforward",
+  "target_model_class": "mid-size-25B",
+  "status": "pending",
+  "qa_rounds": 0,
+  "feedback": null,
+  "tasks": [
+    {
+      "id": "iter1-acp-client",
+      "description": "Implement agent/acp_client.py module that wraps the opencode CLI subprocess for model inference",
+      "acceptance_criteria": {
+        "functional": [
+          "ACPClient initializes with role, model, system prompt path, and workspace root from AgentConfig",
+          "ACPClient.process_message() spawns opencode subprocess with system prompt and user message, captures stdout JSON output",
+          "ACPClient.process_message() parses the JSON response and returns output string, tokens_used, and latency_ms",
+          "ACPClient handles subprocess timeout gracefully, raising a descriptive exception after a configurable deadline",
+          "ACPClient.cleanup() terminates any lingering subprocess on shutdown"
+        ],
+        "solid": "The implementation adheres to SOLID principles by encapsulating all subprocess lifecycle and I/O logic within ACPClient, keeping the HTTP server purely responsible for routing.",
+        "yagni_kiss": "The implementation adheres to YAGNI and KISS by using subprocess.run with a timeout rather than implementing a custom protocol or persistent connection.",
+        "testing": "Well-designed unit tests cover subprocess success, timeout, crash, and JSON parse failure paths, with minimum unit test coverage of 80%+ for touched modules."
+      },
+      "context_files": [
+        "agent/Dockerfile",
+        "agent/config.py",
+        "agent/server.py",
+        "opencode-setup.sh"
+      ],
+      "context_rationale": "server.py shows the current mock integration point, config.py provides the parameters, opencode-setup.sh shows how opencode is invoked, and Dockerfile shows available binaries.",
+      "depends_on": [],
+      "estimated_context_tokens": 6000,
+      "estimated_work_tokens": 25000,
+      "complexity_level": "straightforward",
+      "target_model_class": "mid-size-25B",
+      "status": "pending",
+      "qa_rounds": 0,
+      "feedback": null,
+      "tasks": []
+    },
+    {
+      "id": "iter1-acp-tests",
+      "description": "Add unit tests for ACPClient covering subprocess lifecycle, timeout, and error handling",
+      "acceptance_criteria": {
+        "functional": [
+          "Test mocks subprocess.run to verify ACPClient passes correct args (model, system prompt, message)",
+          "Test verifies ACPClient raises on subprocess timeout after configured deadline",
+          "Test verifies ACPClient raises on non-zero subprocess exit code with descriptive message",
+          "Test verifies ACPClient raises on invalid JSON from subprocess stdout",
+          "Test verifies ACPClient.cleanup() terminates lingering subprocess"
+        ],
+        "solid": "The implementation adheres to SOLID principles by testing ACPClient in isolation through subprocess mocking rather than requiring a live model.",
+        "yagni_kiss": "The implementation adheres to YAGNI and KISS by using standard unittest.mock.patch for subprocess.run, requiring no test infrastructure beyond pytest.",
+        "testing": "Well-designed unit tests cover subprocess success, timeout, crash, and JSON parse failure paths, with minimum unit test coverage of 80%+ for touched modules."
+      },
+      "context_files": [
+        "agent/server.py",
+        "tests/test_e2e.py"
+      ],
+      "context_rationale": "server.py shows the current structure the ACPClient will follow; test_e2e.py shows the existing test patterns to follow.",
+      "depends_on": [
+        "iter1-acp-client"
+      ],
+      "estimated_context_tokens": 5000,
+      "estimated_work_tokens": 15000,
+      "complexity_level": "simple",
+      "target_model_class": "mid-size-25B",
+      "status": "pending",
+      "qa_rounds": 0,
+      "feedback": null,
+      "tasks": []
+    },
+    {
+      "id": "iter1-e2e-test",
+      "description": "Update end-to-end test to run with real OpenCode ACP and verify reproducibility across 2 consecutive runs",
+      "acceptance_criteria": {
+        "functional": [
+          "E2E test launches agent servers with _mock_mode=False against a reachable model endpoint",
+          "Full EM -> Engineer -> QA loop completes and all expected events (TaskCreated, PlanningCompleted, ImplementationCompleted, ReviewPassed, TaskCompleted) are recorded",
+          "Test runs the full loop twice consecutively and confirms both runs reach TaskCompleted",
+          "Distinct model identifiers are recorded per role in the event log across both runs"
+        ],
+        "solid": "The implementation adheres to SOLID principles by isolating the reproducibility assertion logic into a reusable test helper function.",
+        "yagni_kiss": "The implementation adheres to YAGNI and KISS by extending the existing test_e2e.py fixture infrastructure with a non-mock variant rather than writing a separate test file.",
+        "testing": "Well-designed unit tests cover the real-model E2E loop and reproducibility assertion, with minimum unit test coverage of 80%+ for touched modules."
+      },
+      "context_files": [
+        "agent/config.py",
+        "agent/server.py",
+        "tests/test_e2e.py"
+      ],
+      "context_rationale": "test_e2e.py contains the existing E2E test infrastructure to extend; server.py and config.py provide the mock mode toggle needed for the real model run.",
+      "depends_on": [
+        "iter1-server-integration"
+      ],
+      "estimated_context_tokens": 7000,
+      "estimated_work_tokens": 15000,
+      "complexity_level": "straightforward",
+      "target_model_class": "mid-size-25B",
+      "status": "pending",
+      "qa_rounds": 0,
+      "feedback": null,
+      "tasks": []
+    },
+    {
+      "id": "iter1-server-integration",
+      "description": "Wire ACPClient into AgentServer._process_message() and disable mock mode via config flag",
+      "acceptance_criteria": {
+        "functional": [
+          "AgentServer initializes ACPClient with config on construction",
+          "_process_message() delegates to ACPClient when _mock_mode is False, returning real model output",
+          "_mock_mode defaults to True but can be set to False via a MOCK_MODE environment variable or AgentConfig field",
+          "WorkResponse includes accurate tokens_used and latency_ms from ACPClient",
+          "Server gracefully degrades: if ACPClient raises, HTTP 500 is returned with the error detail"
+        ],
+        "solid": "The implementation adheres to SOLID principles by keeping ACPClient as a swappable dependency, allowing mock mode to coexist for testing.",
+        "yagni_kiss": "The implementation adheres to YAGNI and KISS by replacing the existing NotImplementedError branch with a single ACPClient call, adding no new abstraction layers.",
+        "testing": "Well-designed unit tests cover happy path delegation, error propagation, and mock mode toggle, with minimum unit test coverage of 80%+ for touched modules."
+      },
+      "context_files": [
+        "agent/config.py",
+        "agent/server.py"
+      ],
+      "context_rationale": "server.py contains the _process_message method to modify and the _mock_mode flag; config.py needs the new MOCK_MODE field.",
+      "depends_on": [
+        "iter1-acp-client"
+      ],
+      "estimated_context_tokens": 5000,
+      "estimated_work_tokens": 15000,
+      "complexity_level": "simple",
+      "target_model_class": "mid-size-25B",
+      "status": "pending",
+      "qa_rounds": 0,
+      "feedback": null,
+      "tasks": []
+    }
+  ]
+}

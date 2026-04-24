@@ -2,6 +2,27 @@
 
 A setup harness for connecting [OpenCode](https://opencode.ai) AI to self-hosted [vLLM](https://vllm.ai) instances.
 
+## Development Setup
+
+Full project setup in one command:
+
+```bash
+./setup.sh
+```
+
+This checks prerequisites, creates a Python virtual environment, installs dependencies, sets up pre-commit hooks, and runs tests. To also configure OpenCode with a vLLM instance:
+
+```bash
+./setup.sh --vllm-url http://localhost:8000/v1
+```
+
+| Option | Description |
+|--------|-------------|
+| `--vllm-url <url>` | Configure OpenCode with a vLLM endpoint |
+| `--phase <name>` | Run only one phase (e.g., `--phase venv`) |
+| `--skip-validate` | Skip running pytest |
+| `--dry-run` | Preview actions without executing |
+
 ## Quick Start
 
 ```bash
@@ -199,6 +220,59 @@ vllm serve your-model --tensor-parallel-size 2 --max-model-len 32768
 ```
 
 ## Development
+
+### Ad-hoc Agent Contract Assets
+
+Use these files during development to apply the EM and Engineer contracts from `PLAN.md`:
+
+EM planning:
+
+- Prompt: `prompts/em_system_prompt.txt`
+- Schema: `schemas/em_breakdown.schema.json`
+- Validator CLI (schema + dependency graph checks): `tools/validate_em_breakdown.py`
+- Normalizer CLI: `tools/normalize_em_breakdown.py`
+
+Engineer contract:
+
+- Prompt: `prompts/engineer_system_prompt.txt`
+- Input schema (orchestrator → agent): `schemas/engineer_input.schema.json`
+- Output schema (agent → orchestrator): `schemas/engineer_output.schema.json`
+- Library: `tools/engineer_contract.py`
+- Validator CLIs: `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`
+
+QA contract:
+
+- Prompt: `prompts/qa_system_prompt.txt`
+- Input schema (orchestrator → agent): `schemas/qa_input.schema.json`
+- Output schema (agent → orchestrator): `schemas/qa_output.schema.json`
+- Library: `tools/qa_contract.py`
+- Validator CLIs: `tools/validate_qa_input.py`, `tools/validate_qa_output.py`
+
+Example workflow:
+
+```bash
+# 1) Generate breakdown JSON using your EM model and prompt template
+# (save output to tasks/task-001/breakdown.json)
+python3 tools/validate_em_breakdown.py tasks/task-001/breakdown.json
+
+# 2) Validate an Engineer input payload before dispatch
+python3 tools/validate_engineer_input.py tasks/task-001/engineer-input.json
+
+# 3) Validate the Engineer's JSON response before recording ImplementationCompleted
+python3 tools/validate_engineer_output.py tasks/task-001/engineer-output.json
+
+# 4) Validate a QA input payload before dispatch
+python3 tools/validate_qa_input.py tasks/task-001/qa-input.json
+
+# 5) Validate the QA's JSON response before recording ReviewPassed/ReviewFailed
+python3 tools/validate_qa_output.py tasks/task-001/qa-output.json
+```
+
+Optional setup (for schema validation dependency):
+
+```bash
+python3 -m pip install jsonschema
+```
 
 ### Testing
 

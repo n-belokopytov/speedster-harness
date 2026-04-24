@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speedster/schemas/em-breakdown.schema.json",
+  "title": "EM Breakdown Output (recursive task tree)",
+  "$ref": "#/$defs/task",
+  "$defs": {
+    "taskId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "minLength": 1
+    },
+    "acceptanceCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "functional",
+        "solid",
+        "yagni_kiss",
+        "testing"
+      ],
+      "properties": {
+        "functional": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "solid": {
+          "type": "string",
+          "pattern": "^The implementation adheres to SOLID principles by .+\\.$"
+        },
+        "yagni_kiss": {
+          "type": "string",
+          "pattern": "^The implementation adheres to YAGNI and KISS by .+\\.$"
+        },
+        "testing": {
+          "type": "string",
+          "pattern": "^Well-designed unit tests cover .+, with minimum unit test coverage of 80%\\+ for touched modules\\.$"
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "acceptance_criteria",
+        "context_files",
+        "context_rationale",
+        "depends_on",
+        "estimated_context_tokens",
+        "estimated_work_tokens",
+        "complexity_level",
+        "target_model_class",
+        "status",
+        "qa_rounds",
+        "feedback",
+        "tasks"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/taskId"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 12
+        },
+        "acceptance_criteria": {
+          "$ref": "#/$defs/acceptanceCriteria"
+        },
+        "context_files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "context_rationale": {
+          "type": "string",
+          "minLength": 8
+        },
+        "depends_on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/taskId"
+          }
+        },
+        "estimated_context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 19999
+        },
+        "estimated_work_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 80000
+        },
+        "complexity_level": {
+          "type": "string",
+          "enum": [
+            "simple",
+            "straightforward"
+          ]
+        },
+        "target_model_class": {
+          "type": "string",
+          "const": "mid-size-25B"
+        },
+        "status": {
+          "type": "string",
+          "const": "pending"
+        },
+        "qa_rounds": {
+          "type": "integer",
+          "const": 0
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task"
+          }
+        }
+      }
+    }
+  }
+}

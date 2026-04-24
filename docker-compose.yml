@@ -1,0 +1,81 @@
+services:
+  em-agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+      args:
+        ROLE: em
+        MODEL: ${MODEL:-vllm/default}
+    environment:
+      ROLE: em
+      MODEL: ${MODEL:-vllm/default}
+      HOST: 0.0.0.0
+      PORT: 8080
+      TOOLS_CONFIG: /app/agent/tools/em.yaml
+      REPO_ROOT: /workspace
+    ports:
+      - "${EM_AGENT_PORT:-8081}:8080"
+    volumes:
+      - ./:/workspace
+      - ./state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  engineer-agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+      args:
+        ROLE: engineer
+        MODEL: ${MODEL:-vllm/default}
+    environment:
+      ROLE: engineer
+      MODEL: ${MODEL:-vllm/default}
+      HOST: 0.0.0.0
+      PORT: 8080
+      TOOLS_CONFIG: /app/agent/tools/engineer.yaml
+      REPO_ROOT: /workspace
+    ports:
+      - "${ENG_AGENT_PORT:-8082}:8080"
+    volumes:
+      - ./:/workspace
+      - ./state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  qa-agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+      args:
+        ROLE: qa
+        MODEL: ${MODEL:-vllm/default}
+    environment:
+      ROLE: qa
+      MODEL: ${MODEL:-vllm/default}
+      HOST: 0.0.0.0
+      PORT: 8080
+      TOOLS_CONFIG: /app/agent/tools/qa.yaml
+      REPO_ROOT: /workspace
+    ports:
+      - "${QA_AGENT_PORT:-8083}:8080"
+    volumes:
+      - ./:/workspace
+      - ./state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
