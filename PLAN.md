@@ -407,6 +407,15 @@ Handles clone/push operations into the central repo. Configured with SSH key for
 
 Starts the OpenCode ACP server + HTTP API server. Configurable via environment variables (`ROLE`, `MODEL`).
 
+## Harness run input (target repository)
+
+The **target repository** is not part of `task.json` or the EM `breakdown.json`. It is supplied by the **harness** when a run is started, alongside the initial task, as:
+
+- `**repo.url`** — Git clone URL (HTTPS or SSH) for the codebase under work.
+- `**repo.default_branch`** — The integration line for this run (e.g. `main`, `develop`). After clone, check out the corresponding remote-tracking branch (e.g. `origin/<default_branch>`); all orchestrator-managed `speedster/<task-id>` branches are created from that base unless the plan specifies otherwise.
+
+The orchestrator records `repo.url` and `repo.default_branch` in durable state (e.g. in the `TaskCreated` event message or a small run header the replay path understands) so recovery and audits know which remote and base branch were used. Agent JSON payloads to Engineer and QA still use `repo.branch` (always `speedster/...` on the task) and `repo.root` (absolute path inside the container) as defined in the input schemas; they do not embed the clone URL or default branch.
+
 ## Task File Format
 
 ### `tasks/task-001/task.json`
@@ -517,15 +526,15 @@ Run QA via HTTP (`/work`)
 
 Each role has exactly one authoritative system prompt file under `prompts/`; these files are the single source of truth and override anything phrased in this plan.
 
-- EM: [`prompts/em_system_prompt.txt`](prompts/em_system_prompt.txt) — output validated by [`schemas/em_breakdown.schema.json`](schemas/em_breakdown.schema.json) via [`tools/validate_em_breakdown.py`](tools/validate_em_breakdown.py).
-- Engineer: [`prompts/engineer_system_prompt.txt`](prompts/engineer_system_prompt.txt) — input validated by [`schemas/engineer_input.schema.json`](schemas/engineer_input.schema.json) and output by [`schemas/engineer_output.schema.json`](schemas/engineer_output.schema.json), both enforced by [`tools/engineer_contract.py`](tools/engineer_contract.py) (CLIs `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`).
-- QA: [`prompts/qa_system_prompt.txt`](prompts/qa_system_prompt.txt) — input validated by [`schemas/qa_input.schema.json`](schemas/qa_input.schema.json) and output by [`schemas/qa_output.schema.json`](schemas/qa_output.schema.json), both enforced by [`tools/qa_contract.py`](tools/qa_contract.py) (CLIs `tools/validate_qa_input.py`, `tools/validate_qa_output.py`).
+- EM: `[prompts/em_system_prompt.txt](prompts/em_system_prompt.txt)` — output validated by `[schemas/em_breakdown.schema.json](schemas/em_breakdown.schema.json)` via `[tools/validate_em_breakdown.py](tools/validate_em_breakdown.py)`.
+- Engineer: `[prompts/engineer_system_prompt.txt](prompts/engineer_system_prompt.txt)` — input validated by `[schemas/engineer_input.schema.json](schemas/engineer_input.schema.json)` and output by `[schemas/engineer_output.schema.json](schemas/engineer_output.schema.json)`, both enforced by `[tools/engineer_contract.py](tools/engineer_contract.py)` (CLIs `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`).
+- QA: `[prompts/qa_system_prompt.txt](prompts/qa_system_prompt.txt)` — input validated by `[schemas/qa_input.schema.json](schemas/qa_input.schema.json)` and output by `[schemas/qa_output.schema.json](schemas/qa_output.schema.json)`, both enforced by `[tools/qa_contract.py](tools/qa_contract.py)` (CLIs `tools/validate_qa_input.py`, `tools/validate_qa_output.py`).
 
 Orchestrator contracts that the prompts rely on:
 
 - Task ids are restricted to `[A-Za-z0-9._-]+` (git-ref-safe) by the EM schema; `repo.branch` is always `speedster/<root-task-id>`.
 - **Execution semantics**: every task in the EM breakdown tree — leaf or non-leaf — is dispatched to the Engineer as exactly one invocation. A task becomes schedulable once every descendant has been implemented AND every `depends_on` target has been implemented. Non-leaf tasks are *integration* tasks: their commit wires already-implemented descendants together. Leaves are dispatched first (post-order); the root is dispatched last. The parent/child edge is an implicit structural dependency; `depends_on` therefore never names ancestors or descendants. The validator enforces all of this.
-- Each Engineer invocation appends exactly one commit on `repo.branch` with message `<task_id>: <short imperative summary>` (optionally suffixed ` (round <N>)` for rework rounds). No amend, no force-push.
+- Each Engineer invocation appends exactly one commit on `repo.branch` with message `<task_id>: <short imperative summary>` (optionally suffixed  `(round <N>)` for rework rounds). No amend, no force-push.
 - QA's diff baseline for a dispatched task is `<prev-HEAD>..HEAD` of the task branch — the Engineer's newest commit only, not the cumulative diff of the subtree. The orchestrator owns squash-on-merge at root completion.
 - The orchestrator reads the post-push HEAD from git; the Engineer does NOT self-report `commit_sha`.
 - `status: "needs_context"` on the Engineer output is a first-class back-channel: the orchestrator re-dispatches EM planning with the requested paths added to `context_files`, rather than terminating the task. `status: "blocked"` is terminal for the task node and requires human or re-plan intervention.
