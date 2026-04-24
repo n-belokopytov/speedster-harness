@@ -2,6 +2,27 @@
 
 A setup harness for connecting [OpenCode](https://opencode.ai) AI to self-hosted [vLLM](https://vllm.ai) instances.
 
+## Development Setup
+
+Full project setup in one command:
+
+```bash
+./setup.sh
+```
+
+This checks prerequisites, creates a Python virtual environment, installs dependencies, sets up pre-commit hooks, and runs tests. To also configure OpenCode with a vLLM instance:
+
+```bash
+./setup.sh --vllm-url http://localhost:8000/v1
+```
+
+| Option | Description |
+|--------|-------------|
+| `--vllm-url <url>` | Configure OpenCode with a vLLM endpoint |
+| `--phase <name>` | Run only one phase (e.g., `--phase venv`) |
+| `--skip-validate` | Skip running pytest |
+| `--dry-run` | Preview actions without executing |
+
 ## Quick Start
 
 ```bash

@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck opencode-setup.sh
+          shellcheck opencode-setup.sh setup.sh
 
   test:
     runs-on: ubuntu-latest
@@ -28,6 +28,7 @@ jobs:
       - name: Validate script syntax
         run: |
           bash -n opencode-setup.sh
+          bash -n setup.sh
           echo "✓ Script syntax validated"
 
       - name: Check file permissions
