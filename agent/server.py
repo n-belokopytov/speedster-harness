@@ -108,6 +108,7 @@ class AgentServer:
                 role=self.config.role,
                 model=self.config.model,
                 created_at=start_time,
+                last_activity=start_time,
             )
             self._sessions[session_id] = session
 
@@ -178,7 +179,7 @@ class AgentServer:
                     "functional": ["Mock functional criterion"],
                     "solid": "The implementation adheres to SOLID principles by separating concerns.",
                     "yagni_kiss": "The implementation adheres to YAGNI and KISS by keeping the solution simple.",
-                    "testing": "Well-designed unit tests cover the behavior with minimum unit test coverage of 80%+ for touched modules.",
+                    "testing": "Well-designed unit tests cover the behavior, with minimum unit test coverage of 80%+ for touched modules.",
                 },
                 "context_files": ["mock/file.py"],
                 "context_rationale": "Mock rationale",
@@ -195,24 +196,38 @@ class AgentServer:
 
         elif role == "engineer":
             return json.dumps({
+                "task_id": "task-001",
                 "status": "implemented",
-                "summary": "Mock implementation complete",
+                "branch": "speedster/task-001",
                 "files_changed": ["mock/file.py"],
+                "tests_added_or_updated": ["tests/test_mock.py"],
+                "acceptance_evidence": {
+                    "functional": [{"criterion": "Mock criterion", "evidence": "Test passes"}],
+                    "solid": "Separation of concerns maintained",
+                    "yagni_kiss": "Simple solution implemented",
+                    "testing": "Unit tests added",
+                },
+                "assumptions": [],
+                "notes": "",
                 "blocked_reason": "",
                 "requested_context": [],
             })
 
         elif role == "qa":
             return json.dumps({
+                "task_id": "task-001",
                 "status": "approved",
+                "branch": "speedster/task-001",
+                "commit": "abc123def456",
+                "round": 1,
                 "findings": {
-                    "functional": [{"verdict": "met", "notes": "Mock functional check passed"}],
-                    "solid": {"verdict": "met", "notes": "Mock SOLID check passed"},
-                    "yagni_kiss": {"verdict": "met", "notes": "Mock YAGNI/KISS check passed"},
-                    "testing": {"verdict": "met", "notes": "Mock testing check passed"},
+                    "functional": [{"criterion": "Mock criterion", "verdict": "met", "evidence": "Verified"}],
+                    "solid": {"verdict": "met", "evidence": "Good separation"},
+                    "yagni_kiss": {"verdict": "met", "evidence": "Simple solution"},
+                    "testing": {"verdict": "met", "evidence": "Tests added"},
                 },
                 "rejection_reasons": [],
-                "round": 1,
+                "notes": "",
             })
 
         return json.dumps({"status": "unknown", "output": "Mock response"})

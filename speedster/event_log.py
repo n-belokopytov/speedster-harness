@@ -20,7 +20,9 @@ class EventLog:
     def __init__(self, path: Path, fsync_on_append: bool = True):
         self.path = path
         self.fsync = fsync_on_append
+        self._last_seq: int = 0
         self._ensure_file()
+        self._load_last_seq()
 
     def _ensure_file(self) -> None:
         """Create the log file with a header if it doesn't exist."""
@@ -32,22 +34,29 @@ class EventLog:
                 writer = csv.writer(f)
                 writer.writerow(self.HEADER)
 
-    def _next_seq(self) -> int:
-        """Return the next sequence number based on existing rows."""
+    def _load_last_seq(self) -> None:
+        """Load the highest sequence number from the file on startup."""
 
         if not self.path.exists():
-            return 1
+            self._last_seq = 0
+            return
 
-        seq = 1
+        seq = 0
         with self.path.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 try:
-                    seq = max(seq, int(row["seq"]) + 1)
+                    seq = max(seq, int(row["seq"]))
                 except (ValueError, KeyError):
                     continue
 
-        return seq
+        self._last_seq = seq
+
+    def _next_seq(self) -> int:
+        """Return the next sequence number from cached value."""
+
+        self._last_seq += 1
+        return self._last_seq
 
     def append(
         self,

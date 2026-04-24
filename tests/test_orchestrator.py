@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -65,6 +65,50 @@ def make_valid_engineer_output() -> dict:
     }
 
 
+def make_engineer_blocked_output() -> dict:
+    """Create a valid engineer output with blocked status."""
+
+    return {
+        "task_id": "task-test",
+        "status": "blocked",
+        "branch": "speedster/task-test",
+        "files_changed": [],
+        "tests_added_or_updated": [],
+        "acceptance_evidence": {
+            "functional": [],
+            "solid": "N/A",
+            "yagni_kiss": "N/A",
+            "testing": "N/A",
+        },
+        "assumptions": [],
+        "notes": "",
+        "blocked_reason": "Dependency API unavailable",
+        "requested_context": [],
+    }
+
+
+def make_engineer_needs_context_output() -> dict:
+    """Create a valid engineer output with needs_context status."""
+
+    return {
+        "task_id": "task-test",
+        "status": "needs_context",
+        "branch": "speedster/task-test",
+        "files_changed": [],
+        "tests_added_or_updated": [],
+        "acceptance_evidence": {
+            "functional": [],
+            "solid": "N/A",
+            "yagni_kiss": "N/A",
+            "testing": "N/A",
+        },
+        "assumptions": [],
+        "notes": "",
+        "blocked_reason": "",
+        "requested_context": ["src/config.py", "README.md"],
+    }
+
+
 def make_valid_qa_output(status: str = "approved", round_num: int = 1) -> dict:
     """Create a valid QA output."""
 
@@ -112,6 +156,17 @@ def make_valid_qa_output(status: str = "approved", round_num: int = 1) -> dict:
             "rejection_reasons": ["Missing error handling"],
             "notes": "",
         }
+
+
+def _make_async_response(output: str, tokens: int = 100, latency: int = 50) -> MagicMock:
+    """Create a mock async agent response."""
+
+    return MagicMock(
+        session_id="test-session",
+        output=output,
+        tokens_used=tokens,
+        latency_ms=latency,
+    )
 
 
 @pytest.fixture
@@ -204,9 +259,23 @@ class TestBuildPrompts:
             model="vllm/em-test",
             output=json.dumps(make_valid_breakdown()),
         )
-        prompt = orchestrator._build_engineer_prompt(task, plan, 2)
-        assert "Previous Round" in prompt
-        assert "QA feedback" in prompt
+        prompt = orchestrator._build_engineer_prompt(
+            task, plan, 2, qa_feedback=["Missing error handling", "Add input validation"]
+        )
+        assert "QA Feedback" in prompt
+        assert "Missing error handling" in prompt
+        assert "Add input validation" in prompt
+
+    def test_build_engineer_prompt_without_feedback(
+        self, orchestrator: Orchestrator, task: Task
+    ) -> None:
+        plan = StepResult(
+            role="em",
+            model="vllm/em-test",
+            output=json.dumps(make_valid_breakdown()),
+        )
+        prompt = orchestrator._build_engineer_prompt(task, plan, 2, qa_feedback=None)
+        assert "QA Feedback" not in prompt
 
     def test_build_qa_prompt(
         self, orchestrator: Orchestrator, task: Task
@@ -220,6 +289,17 @@ class TestBuildPrompts:
         assert "QA system prompt" in prompt
         assert "task-test" in prompt
         assert "Round 1" in prompt
+
+    def test_build_em_context_prompt(
+        self, orchestrator: Orchestrator, task: Task
+    ) -> None:
+        prompt = orchestrator._build_em_context_prompt(
+            task, requested_context=["src/config.py", "README.md"]
+        )
+        assert "EM system prompt" in prompt
+        assert "Context Requested" in prompt
+        assert "src/config.py" in prompt
+        assert "README.md" in prompt
 
 
 class TestProcessTask:
@@ -236,25 +316,11 @@ class TestProcessTask:
         with patch.object(
             orchestrator.agent_client,
             "work",
+            new_callable=AsyncMock,
             side_effect=[
-                MagicMock(
-                    session_id="test-session",
-                    output=em_output,
-                    tokens_used=100,
-                    latency_ms=50,
-                ),
-                MagicMock(
-                    session_id="test-session",
-                    output=engineer_output,
-                    tokens_used=200,
-                    latency_ms=100,
-                ),
-                MagicMock(
-                    session_id="test-session",
-                    output=qa_output,
-                    tokens_used=150,
-                    latency_ms=75,
-                ),
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_output),
             ],
         ):
             await orchestrator.process_task(task)
@@ -282,12 +348,13 @@ class TestProcessTask:
         with patch.object(
             orchestrator.agent_client,
             "work",
+            new_callable=AsyncMock,
             side_effect=[
-                MagicMock(session_id="s", output=em_output, tokens_used=100, latency_ms=50),
-                MagicMock(session_id="s", output=engineer_output, tokens_used=200, latency_ms=100),
-                MagicMock(session_id="s", output=qa_reject, tokens_used=150, latency_ms=75),
-                MagicMock(session_id="s", output=engineer_output, tokens_used=200, latency_ms=100),
-                MagicMock(session_id="s", output=qa_approve, tokens_used=150, latency_ms=75),
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_reject),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_approve),
             ],
         ):
             await orchestrator.process_task(task)
@@ -299,6 +366,135 @@ class TestProcessTask:
         assert "ReviewFailed" in event_types
         assert "ReviewPassed" in event_types
         assert "TaskCompleted" in event_types
+
+    @pytest.mark.asyncio
+    async def test_qa_feedback_passed_to_engineer(
+        self, orchestrator: Orchestrator, task: Task, tmp_path: Path
+    ) -> None:
+        """Test that QA feedback is injected into engineer prompt on re-dispatch."""
+
+        em_output = json.dumps(make_valid_breakdown())
+        engineer_output = json.dumps(make_valid_engineer_output())
+        qa_reject = json.dumps(make_valid_qa_output("rejected", 1))
+        qa_approve = json.dumps(make_valid_qa_output("approved", 2))
+
+        work_mock = AsyncMock(
+            side_effect=[
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_reject),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_approve),
+            ]
+        )
+
+        with patch.object(orchestrator.agent_client, "work", work_mock):
+            await orchestrator.process_task(task)
+
+        calls = work_mock.call_args_list
+        engineer_calls = [
+            c for c in calls if len(c[0]) >= 1 and "8082" in c[0][0]
+        ]
+        assert len(engineer_calls) == 2
+        second_eng_prompt = engineer_calls[1][0][1]
+        assert "QA Feedback" in second_eng_prompt
+        assert "Missing error handling" in second_eng_prompt
+
+
+class TestEngineerStatuses:
+    @pytest.mark.asyncio
+    async def test_engineer_blocked_fails_task(
+        self, orchestrator: Orchestrator, task: Task, tmp_path: Path
+    ) -> None:
+        """Test that a blocked engineer status fails the task."""
+
+        em_output = json.dumps(make_valid_breakdown())
+        blocked_output = json.dumps(make_engineer_blocked_output())
+
+        with patch.object(
+            orchestrator.agent_client,
+            "work",
+            new_callable=AsyncMock,
+            side_effect=[
+                _make_async_response(em_output),
+                _make_async_response(blocked_output),
+            ],
+        ):
+            await orchestrator.process_task(task)
+
+        events = list(orchestrator.event_log.replay())
+        event_types = [e["event_type"] for e in events]
+
+        assert "TaskFailed" in event_types
+        failed_event = next(e for e in events if e["event_type"] == "TaskFailed")
+        assert "blocked" in failed_event["message"].lower()
+        assert "Dependency API unavailable" in failed_event["message"]
+
+    @pytest.mark.asyncio
+    async def test_engineer_needs_context_dispatches_to_em(
+        self, orchestrator: Orchestrator, task: Task, tmp_path: Path
+    ) -> None:
+        """Test that needs_context dispatches to EM for context resolution."""
+
+        em_output = json.dumps(make_valid_breakdown())
+        needs_context = json.dumps(make_engineer_needs_context_output())
+        engineer_output = json.dumps(make_valid_engineer_output())
+        qa_output = json.dumps(make_valid_qa_output("approved"))
+
+        with patch.object(
+            orchestrator.agent_client,
+            "work",
+            new_callable=AsyncMock,
+            side_effect=[
+                _make_async_response(em_output),
+                _make_async_response(needs_context),
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_output),
+            ],
+        ):
+            await orchestrator.process_task(task)
+
+        events = list(orchestrator.event_log.replay())
+        event_types = [e["event_type"] for e in events]
+
+        assert "ContextRequested" in event_types
+        assert "TaskCompleted" in event_types
+
+    @pytest.mark.asyncio
+    async def test_needs_context_does_not_consume_qa_round(
+        self, config: AgentConfig, task: Task, tmp_path: Path
+    ) -> None:
+        """Test that needs_context re-dispatches don't count against max_qa_rounds."""
+
+        config.max_qa_rounds = 1
+        orchestrator = Orchestrator(config)
+
+        em_output = json.dumps(make_valid_breakdown())
+        needs_context = json.dumps(make_engineer_needs_context_output())
+        engineer_output = json.dumps(make_valid_engineer_output())
+        qa_output = json.dumps(make_valid_qa_output("approved"))
+
+        with patch.object(
+            orchestrator.agent_client,
+            "work",
+            new_callable=AsyncMock,
+            side_effect=[
+                _make_async_response(em_output),
+                _make_async_response(needs_context),
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_output),
+            ],
+        ):
+            await orchestrator.process_task(task)
+
+        events = list(orchestrator.event_log.replay())
+        event_types = [e["event_type"] for e in events]
+
+        assert "ContextRequested" in event_types
+        assert "TaskCompleted" in event_types
+        assert "TaskFailed" not in event_types
 
 
 class TestMaxQARounds:
@@ -318,14 +514,15 @@ class TestMaxQARounds:
         with patch.object(
             orchestrator.agent_client,
             "work",
+            new_callable=AsyncMock,
             side_effect=[
-                MagicMock(session_id="s", output=em_output, tokens_used=100, latency_ms=50),
-                MagicMock(session_id="s", output=engineer_output, tokens_used=200, latency_ms=100),
-                MagicMock(session_id="s", output=qa_reject, tokens_used=150, latency_ms=75),
-                MagicMock(session_id="s", output=engineer_output, tokens_used=200, latency_ms=100),
-                MagicMock(session_id="s", output=qa_reject, tokens_used=150, latency_ms=75),
-                MagicMock(session_id="s", output=engineer_output, tokens_used=200, latency_ms=100),
-                MagicMock(session_id="s", output=qa_reject, tokens_used=150, latency_ms=75),
+                _make_async_response(em_output),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_reject),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_reject),
+                _make_async_response(engineer_output),
+                _make_async_response(qa_reject),
             ],
         ):
             await orchestrator.process_task(task)
@@ -338,3 +535,38 @@ class TestMaxQARounds:
             e for e in events if e["event_type"] == "TaskFailed"
         )
         assert "Max QA rounds exceeded" in failed_event["message"]
+
+
+class TestStepResult:
+    def test_feedback_is_list(self) -> None:
+        result = StepResult(
+            role="qa",
+            model="test",
+            output="",
+            feedback=["reason 1", "reason 2"],
+        )
+        assert isinstance(result.feedback, list)
+        assert result.feedback == ["reason 1", "reason 2"]
+
+    def test_feedback_can_be_string(self) -> None:
+        result = StepResult(
+            role="qa",
+            model="test",
+            output="",
+            feedback="All criteria met",
+        )
+        assert result.feedback == "All criteria met"
+
+
+class TestParseOutput:
+    def test_parse_valid_json(self, orchestrator: Orchestrator) -> None:
+        result = orchestrator._parse_output('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_parse_invalid_json(self, orchestrator: Orchestrator) -> None:
+        result = orchestrator._parse_output("not json")
+        assert result is None
+
+    def test_parse_none(self, orchestrator: Orchestrator) -> None:
+        result = orchestrator._parse_output(None)  # type: ignore
+        assert result is None

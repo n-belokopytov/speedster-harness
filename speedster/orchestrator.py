@@ -6,10 +6,10 @@ for git until GitHandler exists in Iteration 3.
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from speedster.agent_client import AgentClient, AgentResponse
 from speedster.config import AgentConfig, default_config
@@ -32,7 +32,7 @@ class StepResult:
     branch: str = ""
     commit_sha: str = ""
     approved: bool = False
-    feedback: str = ""
+    feedback: list[str] | str = ""
 
 
 class Orchestrator:
@@ -95,17 +95,19 @@ class Orchestrator:
         )
 
         # Save breakdown to task directory
-        try:
-            import json
-
-            breakdown = json.loads(plan.output)
-            self.task_manager.save_breakdown(task_id, breakdown)
-        except (json.JSONDecodeError, Exception) as exc:
-            logger.warning("Failed to save breakdown: %s", exc)
+        breakdown = self._parse_output(plan.output)
+        if breakdown:
+            try:
+                self.task_manager.save_breakdown(task_id, breakdown)
+            except (TypeError, ValueError, OSError) as exc:
+                logger.error("Failed to save breakdown: %s", exc)
+        else:
+            logger.warning("EM output was not valid JSON, skipping breakdown save")
 
         # Step 3: Engineer -> QA loop
         max_rounds = self.config.max_qa_rounds
         round_num = 0
+        qa_feedback: list[str] | None = None
 
         while True:
             if max_rounds is not None and round_num >= max_rounds:
@@ -123,10 +125,57 @@ class Orchestrator:
                 )
                 break
 
+            # Run Engineer (round_num passed for context; incremented below for QA)
+            engineer_result = await self._run_engineer(
+                task, plan, round_num + 1, qa_feedback
+            )
+
+            # Handle engineer status
+            eng_output = self._parse_output(engineer_result.output)
+            eng_status = eng_output.get("status", "implemented") if eng_output else "implemented"
+
+            if eng_status == "blocked":
+                blocked_reason = eng_output.get("blocked_reason", "Unknown") if eng_output else "Unknown"
+                self.event_log.append(
+                    task_id,
+                    "TaskFailed",
+                    "orchestrator",
+                    "",
+                    f"Engineer blocked: {blocked_reason}",
+                )
+                logger.warning(
+                    "Task %s failed: engineer blocked (%s)",
+                    task_id,
+                    blocked_reason,
+                )
+                break
+
+            elif eng_status == "needs_context":
+                requested = eng_output.get("requested_context", []) if eng_output else []
+                self.event_log.append(
+                    task_id,
+                    "ContextRequested",
+                    "engineer",
+                    engineer_result.model,
+                    json.dumps(requested),
+                )
+                logger.info(
+                    "Task %s engineer needs context: %s",
+                    task_id,
+                    requested,
+                )
+
+                # Dispatch to EM to resolve context
+                context_plan = await self._run_em_for_context(task, requested)
+                if context_plan.output != plan.output:
+                    plan = context_plan
+                    logger.info("Task %s plan updated with new context", task_id)
+
+                # Re-dispatch to engineer in next iteration
+                continue
+
             round_num += 1
 
-            # Run Engineer
-            engineer_result = await self._run_engineer(task, plan, round_num)
             self.event_log.append(
                 task_id,
                 "ImplementationCompleted",
@@ -142,7 +191,9 @@ class Orchestrator:
                 "ReviewPassed" if qa_result.approved else "ReviewFailed",
                 "qa",
                 qa_result.model,
-                qa_result.feedback,
+                json.dumps(qa_result.feedback)
+                if isinstance(qa_result.feedback, list)
+                else str(qa_result.feedback),
             )
 
             if qa_result.approved:
@@ -156,208 +207,188 @@ class Orchestrator:
                 logger.info("Task %s completed after %d round(s)", task_id, round_num)
                 break
 
+            # Capture QA feedback for next engineer round
+            qa_feedback = (
+                qa_result.feedback
+                if isinstance(qa_result.feedback, list)
+                else [qa_result.feedback]
+            )
+
             logger.info(
                 "Task %s QA round %d failed, re-dispatching to Engineer",
                 task_id,
                 round_num,
             )
 
-    async def _run_em(self, task: Task) -> StepResult:
-        """Run the EM agent for planning.
+    async def _run_with_retry(
+        self,
+        url: str,
+        prompt: str,
+        validate_fn: Callable[[str], Any],
+        max_retries: int = 1,
+    ) -> AgentResponse:
+        """Call an agent with validation and retry on ValidationError.
 
         Args:
-            task: The task to plan
+            url: Agent container URL
+            prompt: Prompt to send
+            validate_fn: Validator function that raises ValidationError on failure
+            max_retries: Number of retry attempts after initial failure
 
         Returns:
-            StepResult with EM output
+            Validated AgentResponse
         """
+
+        try:
+            response = await self.agent_client.work(url, prompt)
+            validate_fn(response.output)
+            return response
+
+        except ValidationError as exc:
+            if max_retries <= 0:
+                raise
+
+            logger.warning("Output validation failed, retrying: %s", exc)
+            retry_prompt = f"{prompt}\n\nPrevious validation error: {exc}"
+            response = await self.agent_client.work(url, retry_prompt)
+            validate_fn(response.output)
+            return response
+
+    async def _run_em(self, task: Task) -> StepResult:
+        """Run the EM agent for planning."""
 
         em_config = self.config.roles.get("em")
         model_name = em_config.model.model if em_config else "vllm/em-default"
 
-        # Build prompt from task
         prompt = self._build_em_prompt(task)
+        em_url = self.config.em_url
 
-        # Get EM agent URL from config or use default
-        em_url = getattr(self.config, "em_url", "http://localhost:8081")
+        response = await self._run_with_retry(
+            em_url,
+            prompt,
+            self.validator.validate_em_breakdown,
+        )
 
-        try:
-            response = self.agent_client.work(em_url, prompt)
+        return StepResult(
+            role="em",
+            model=model_name,
+            output=response.output,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
+        )
 
-            # Validate EM output
-            self.validator.validate_em_breakdown(response.output)
+    async def _run_em_for_context(
+        self, task: Task, requested_context: list[str]
+    ) -> StepResult:
+        """Run the EM agent to resolve a context request from the engineer."""
 
-            return StepResult(
-                role="em",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-            )
+        em_config = self.config.roles.get("em")
+        model_name = em_config.model.model if em_config else "vllm/em-default"
 
-        except ValidationError as exc:
-            logger.warning("EM output validation failed, retrying: %s", exc)
-            retry_prompt = f"{prompt}\n\nPrevious validation error: {exc}"
-            response = self.agent_client.work(em_url, retry_prompt)
+        prompt = self._build_em_context_prompt(task, requested_context)
+        em_url = self.config.em_url
 
-            self.validator.validate_em_breakdown(response.output)
+        response = await self._run_with_retry(
+            em_url,
+            prompt,
+            self.validator.validate_em_breakdown,
+        )
 
-            return StepResult(
-                role="em",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-            )
+        return StepResult(
+            role="em",
+            model=model_name,
+            output=response.output,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
+        )
 
     async def _run_engineer(
-        self, task: Task, plan: StepResult, round_num: int
+        self,
+        task: Task,
+        plan: StepResult,
+        round_num: int,
+        qa_feedback: list[str] | None = None,
     ) -> StepResult:
-        """Run the Engineer agent for implementation.
-
-        Args:
-            task: The task to implement
-            plan: The EM plan output
-            round_num: Current QA round number
-
-        Returns:
-            StepResult with Engineer output
-        """
+        """Run the Engineer agent for implementation."""
 
         eng_config = self.config.roles.get("engineer")
         model_name = eng_config.model.model if eng_config else "vllm/engineer-default"
 
-        prompt = self._build_engineer_prompt(task, plan, round_num)
+        prompt = self._build_engineer_prompt(task, plan, round_num, qa_feedback)
+        eng_url = self.config.eng_url
 
-        eng_url = getattr(self.config, "eng_url", "http://localhost:8082")
+        response = await self._run_with_retry(
+            eng_url,
+            prompt,
+            self.validator.validate_engineer_output,
+        )
 
-        try:
-            response = self.agent_client.work(eng_url, prompt)
-            self.validator.validate_engineer_output(response.output)
-
-            return StepResult(
-                role="engineer",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-                branch=f"speedster/{task.id}",
-            )
-
-        except ValidationError as exc:
-            logger.warning(
-                "Engineer output validation failed, retrying: %s", exc
-            )
-            retry_prompt = f"{prompt}\n\nPrevious validation error: {exc}"
-            response = self.agent_client.work(eng_url, retry_prompt)
-
-            self.validator.validate_engineer_output(response.output)
-
-            return StepResult(
-                role="engineer",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-                branch=f"speedster/{task.id}",
-            )
+        return StepResult(
+            role="engineer",
+            model=model_name,
+            output=response.output,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
+            branch=f"speedster/{task.id}",
+        )
 
     async def _run_qa(
         self, task: Task, engineer_result: StepResult, round_num: int
     ) -> StepResult:
-        """Run the QA agent for review.
-
-        Args:
-            task: The task to review
-            engineer_result: The engineer's output
-            round_num: Current QA round number
-
-        Returns:
-            StepResult with QA output and approval status
-        """
+        """Run the QA agent for review."""
 
         qa_config = self.config.roles.get("qa")
         model_name = qa_config.model.model if qa_config else "vllm/qa-default"
 
         prompt = self._build_qa_prompt(task, engineer_result, round_num)
+        qa_url = self.config.qa_url
 
-        qa_url = getattr(self.config, "qa_url", "http://localhost:8083")
+        response = await self._run_with_retry(
+            qa_url,
+            prompt,
+            self.validator.validate_qa_output,
+        )
+
+        return self._parse_qa_result(response, model_name)
+
+    def _parse_qa_result(
+        self, response: AgentResponse, model_name: str
+    ) -> StepResult:
+        """Parse QA agent response into StepResult with approval status."""
+
+        qa_output = self._parse_output(response.output)
+        if not isinstance(qa_output, dict):
+            qa_output = {}
+
+        approved = qa_output.get("status") == "approved"
+        rejection_reasons = qa_output.get("rejection_reasons", ["All criteria met"])
+
+        feedback = (
+            rejection_reasons
+            if isinstance(rejection_reasons, list)
+            else [str(rejection_reasons)]
+        ) if not approved else ["All criteria met"]
+
+        return StepResult(
+            role="qa",
+            model=model_name,
+            output=response.output,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
+            approved=approved,
+            feedback=feedback,
+        )
+
+    def _parse_output(self, output: str) -> dict[str, Any] | None:
+        """Parse a JSON string output into a dict."""
 
         try:
-            response = self.agent_client.work(qa_url, prompt)
-            qa_output = self.validator.validate_qa_output(response.output)
-
-            # Determine approval status
-            if isinstance(qa_output, str):
-                import json
-
-                qa_output = json.loads(qa_output)
-
-            approved = qa_output.get("status") == "approved"
-            rejection_reasons = qa_output.get("rejection_reasons", ["All criteria met"])
-
-            if not approved:
-                feedback = (
-                    ", ".join(rejection_reasons)
-                    if isinstance(rejection_reasons, list)
-                    else str(rejection_reasons)
-                )
-            else:
-                feedback = "All criteria met"
-
-            return StepResult(
-                role="qa",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-                approved=approved,
-                feedback=feedback,
-            )
-
-        except ValidationError as exc:
-            logger.warning("QA output validation failed, retrying: %s", exc)
-            retry_prompt = f"{prompt}\n\nPrevious validation error: {exc}"
-            response = self.agent_client.work(qa_url, retry_prompt)
-
-            qa_output = self.validator.validate_qa_output(response.output)
-
-            if isinstance(qa_output, str):
-                import json
-
-                qa_output = json.loads(qa_output)
-
-            approved = qa_output.get("status") == "approved"
-            rejection_reasons = qa_output.get("rejection_reasons", ["All criteria met"])
-
-            if not approved:
-                feedback = (
-                    ", ".join(rejection_reasons)
-                    if isinstance(rejection_reasons, list)
-                    else str(rejection_reasons)
-                )
-            else:
-                feedback = "All criteria met"
-
-            return StepResult(
-                role="qa",
-                model=model_name,
-                output=response.output,
-                tokens_used=response.tokens_used,
-                latency_ms=response.latency_ms,
-                approved=approved,
-                feedback=feedback,
-            )
+            return json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            return None
 
     def _build_em_prompt(self, task: Task) -> str:
-        """Build the EM prompt for a task.
-
-        Args:
-            task: The task to plan
-
-        Returns:
-            Prompt string for the EM agent
-        """
+        """Build the EM prompt for a task."""
 
         em_config = self.config.roles.get("em")
         system_prompt = em_config.system_prompt if em_config else ""
@@ -371,19 +402,33 @@ class Orchestrator:
             f"Please produce a breakdown.json with implementation plan."
         )
 
-    def _build_engineer_prompt(
-        self, task: Task, plan: StepResult, round_num: int
+    def _build_em_context_prompt(
+        self, task: Task, requested_context: list[str]
     ) -> str:
-        """Build the Engineer prompt for implementation.
+        """Build the EM prompt to resolve a context request."""
 
-        Args:
-            task: The task to implement
-            plan: The EM plan
-            round_num: Current round number
+        em_config = self.config.roles.get("em")
+        system_prompt = em_config.system_prompt if em_config else ""
 
-        Returns:
-            Prompt string for the Engineer agent
-        """
+        return (
+            f"{system_prompt}\n\n"
+            f"## Task\n"
+            f"ID: {task.id}\n"
+            f"Description: {task.description}\n"
+            f"Priority: {task.priority}\n\n"
+            f"## Context Requested by Engineer\n"
+            f"{json.dumps(requested_context, indent=2)}\n\n"
+            f"Please update the breakdown with the requested context information."
+        )
+
+    def _build_engineer_prompt(
+        self,
+        task: Task,
+        plan: StepResult,
+        round_num: int,
+        qa_feedback: list[str] | None = None,
+    ) -> str:
+        """Build the Engineer prompt for implementation."""
 
         eng_config = self.config.roles.get("engineer")
         system_prompt = eng_config.system_prompt if eng_config else ""
@@ -397,25 +442,18 @@ class Orchestrator:
             f"{plan.output}\n\n"
         )
 
-        if round_num > 1:
-            prompt += f"## Previous Round ({round_num - 1}) Feedback\n"
-            prompt += "Please address the QA feedback below.\n\n"
+        if round_num > 1 and qa_feedback:
+            feedback_text = "\n".join(f"- {item}" for item in qa_feedback)
+            prompt += f"## QA Feedback from Previous Round\n"
+            prompt += f"{feedback_text}\n\n"
+            prompt += "Please address the above feedback.\n\n"
 
         return prompt
 
     def _build_qa_prompt(
         self, task: Task, engineer_result: StepResult, round_num: int
     ) -> str:
-        """Build the QA prompt for review.
-
-        Args:
-            task: The task to review
-            engineer_result: The engineer's output
-            round_num: Current round number
-
-        Returns:
-            Prompt string for the QA agent
-        """
+        """Build the QA prompt for review."""
 
         qa_config = self.config.roles.get("qa")
         system_prompt = qa_config.system_prompt if qa_config else ""

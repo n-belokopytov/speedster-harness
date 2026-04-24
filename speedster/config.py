@@ -63,6 +63,9 @@ class AgentConfig(BaseModel):
     track_performance: bool = True
     repo_url: str | None = None
     repo_default_branch: str | None = None
+    em_url: str = "http://localhost:8081"
+    eng_url: str = "http://localhost:8082"
+    qa_url: str = "http://localhost:8083"
 
 
 class RunConfig(BaseModel):

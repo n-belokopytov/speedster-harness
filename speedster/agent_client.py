@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -35,7 +36,10 @@ class AgentClient:
     """HTTP client for orchestrator -> agent communication.
 
     Handles connection pooling, timeouts, retries on transient errors,
-    and health check integration.
+    and health check integration. Use as an async context manager:
+
+        async with AgentClient() as client:
+            resp = await client.work(url, message)
     """
 
     def __init__(
@@ -47,16 +51,24 @@ class AgentClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self._client = httpx.Client(
-            timeout=httpx.Timeout(timeout, connect=10.0),
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        )
+        self._client: httpx.AsyncClient | None = None
 
-    def __del__(self) -> None:
-        if hasattr(self, "_client"):
-            self._client.close()
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout, connect=10.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._client
 
-    def work(
+    async def __aenter__(self) -> AgentClient:
+        self._client = await self._get_client()
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.close()
+
+    async def work(
         self,
         url: str,
         message: str,
@@ -77,6 +89,7 @@ class AgentClient:
             ValueError: On malformed agent responses
         """
 
+        client = await self._get_client()
         payload = {"message": message}
         if session_id:
             payload["session_id"] = session_id
@@ -85,7 +98,7 @@ class AgentClient:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self._client.post(
+                response = await client.post(
                     f"{url}/work",
                     json=payload,
                     timeout=self.timeout,
@@ -110,15 +123,14 @@ class AgentClient:
                 )
 
                 if attempt < self.max_retries:
-                    import time
-
-                    time.sleep(self.retry_delay * attempt)
+                    delay = min(self.retry_delay * (2 ** attempt), 60)
+                    await asyncio.sleep(delay)
 
         raise last_error or httpx.HTTPError(
             f"Agent work failed after {self.max_retries} attempts"
         )
 
-    def health(self, url: str) -> HealthResponse:
+    async def health(self, url: str) -> HealthResponse:
         """Check agent health via /health endpoint.
 
         Args:
@@ -128,8 +140,9 @@ class AgentClient:
             HealthResponse with status and metadata
         """
 
+        client = await self._get_client()
         try:
-            response = self._client.get(
+            response = await client.get(
                 f"{url}/health",
                 timeout=10.0,
             )
@@ -146,7 +159,8 @@ class AgentClient:
             logger.error("Health check failed for %s: %s", url, exc)
             return HealthResponse(status="unhealthy")
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the underlying HTTP client."""
 
-        self._client.close()
+        if self._client and not self._client.is_closed:
+            await self._client.close()

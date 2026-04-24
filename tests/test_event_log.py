@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -48,6 +49,25 @@ class TestEventLogInit:
         log_path = tmp_path / "nested" / "dir" / "events.csv"
         EventLog(log_path)
         assert log_path.exists()
+
+    def test_loads_last_seq_on_init(self, event_log_path: Path) -> None:
+        log1 = EventLog(event_log_path)
+        log1.append("task-1", "TaskCreated", "orchestrator", "", "Test 1")
+        log1.append("task-1", "PlanningCompleted", "em", "model", "Planned")
+
+        log2 = EventLog(event_log_path)
+        assert log2._last_seq == 2
+
+    def test_next_seq_uses_cache(self, event_log_path: Path) -> None:
+        log = EventLog(event_log_path)
+        log.append("task-1", "Event1", "role", "model", "Msg 1")
+        log.append("task-1", "Event2", "role", "model", "Msg 2")
+        log.append("task-1", "Event3", "role", "model", "Msg 3")
+
+        events = list(log.replay())
+        seqs = [int(e["seq"]) for e in events]
+        assert seqs == [1, 2, 3]
+        assert log._last_seq == 3
 
 
 class TestAppend:
