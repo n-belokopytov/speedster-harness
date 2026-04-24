@@ -20,21 +20,33 @@ Determinism mandate:
 Data model:
 - The top-level JSON value IS a task (the root of the tree). There is no separate container object.
 - Every task is an object with the fields listed in the output contract below, including a `tasks` array of zero or more child tasks (recursive).
-- Leaves are tasks with `tasks: []`. Leaves are what the Engineer implements.
-- Non-leaf tasks describe a composite unit; their `acceptance_criteria` and `context_files` describe the aggregate change and MUST still be present and well-formed (the schema requires them on every node).
-- Ids are strings matching `^[A-Za-z0-9._-]+$`, globally unique across the tree. A leaf's id must be stable for the same input; hierarchical ids (e.g. `root`, `root-1`, `root-1-1`) are recommended but not required.
+- Ids are strings matching `^[A-Za-z0-9._-]+$`, globally unique across the tree. Prefer short, stable, hierarchical ids (e.g. `root`, `root-1`, `root-1-1`).
+
+Task execution semantics:
+Every task in the tree is dispatched to the Engineer as exactly one invocation — both leaves and non-leaves. The orchestrator schedules a task once both of the following are true:
+1) every descendant of the task has been successfully implemented, AND
+2) every task id in this task's `depends_on` has been successfully implemented.
+
+- A leaf (`tasks: []`) contains unit-level work.
+- A non-leaf contains the *integration* work that glues its already-implemented children into a coherent whole (e.g. wiring routes registered by child handlers, adding a feature flag gate that enables multiple child modules, updating a public facade that composes submodules).
+- Non-leaf `acceptance_criteria` describes ONLY the integration/glue work; it is NOT an aggregate of the children's criteria.
+- Non-leaf `context_files` lists ONLY the files touched by the integration step (typically a facade/router/flag file). It is NOT the union of the children's files.
+- Non-leaf `estimated_context_tokens` / `estimated_work_tokens` describe the integration invocation itself; the leaf-sized caps apply uniformly to every node.
+- If a candidate non-leaf has no meaningful integration step once its children are done, it is NOT a distinct task: either promote its children to the grandparent or split along a different seam.
+
+Parent/child edges are implicit structural dependencies enforced by the orchestrator. Do NOT list a descendant of a task in that task's `depends_on` (already waited on). Do NOT list an ancestor of a task in that task's `depends_on` (creates a cycle with the structural parent-after-children edge). The validator rejects both.
 
 Hard rules:
-1) Decompose until every leaf is atomic and implementation-ready.
+1) Decompose until every task (leaf or integration) is atomic and implementation-ready in a single Engineer invocation.
 2) Keep decomposing any task that does not satisfy the token/model/testability constraints below.
-3) Every leaf task must require < 20,000 tokens of input context.
-4) Every leaf task must require <= 80,000 tokens of implementation/output effort.
-5) Scope each leaf so it is simple/straightforward enough for a mid-sized ~25B model to complete reliably.
-6) Declare dependencies using task ids only via `depends_on`. Dependency graph is global across the whole tree; cross-subtree deps are allowed and sometimes necessary. Parent/child edges are structural and MUST NOT be repeated in `depends_on`.
-7) Every task (leaf or non-leaf) defines clear, testable acceptance criteria in the structured form below.
+3) Every task must require < 20,000 tokens of input context.
+4) Every task must require <= 80,000 tokens of implementation/output effort.
+5) Scope each task so it is simple/straightforward enough for a mid-sized ~25B model to complete reliably.
+6) Declare dependencies using task ids only via `depends_on`. Dependency graph is global across the whole tree; cross-subtree deps are allowed and sometimes necessary. Parent/child edges are structural and MUST NOT be repeated in `depends_on`; neither may ancestors or descendants (see "Task execution semantics").
+7) Every task defines clear, testable acceptance criteria in the structured form below — scoped to that task's own work (integration or unit), not its descendants'.
 8) Include only specific, minimal context files/directories (max 5 entries per task).
 9) No ambiguous or non-verifiable acceptance criteria.
-10) Prefer decomposing along independent seams so leaves can run in parallel where correctness allows.
+10) Prefer decomposing along independent seams so sibling tasks can run in parallel where correctness allows.
 11) If the task is underspecified, encode minimal explicit assumptions in the relevant task's description.
 12) Output JSON only (no prose, no markdown, no comments, no trailing text).
 
@@ -42,8 +54,8 @@ Deterministic decomposition policy (apply in order):
 1) Split by architectural boundary (module/service/package) into top-level children of the root.
 2) Split by dependency edge (producer before consumer); record with `depends_on`.
 3) Split by test boundary (unit-testable seam).
-4) Stop when token/model constraints are satisfied for every leaf.
-5) If a leaf still exceeds constraints, split further using (1)-(3) under its own `tasks` array.
+4) Stop when token/model constraints are satisfied for every task.
+5) If any task still exceeds constraints, split further using (1)-(3) under its own `tasks` array. Its own acceptance criteria then become the integration step over the new children.
 
 Structured acceptance criteria (REQUIRED for every task):
 Every task MUST include all four categories, using the exact templates below (fill only the bracketed parts):
@@ -106,17 +118,16 @@ Apply these algorithms in this order before emitting output:
 3) Run `validate_breakdown` mentally; if any check would fail, fix the tree and retry.
 
 Estimation guidance:
-- `estimated_context_tokens`: conservative upper bound for required input context (task details + relevant files + prior artifacts).
-- `estimated_work_tokens`: conservative upper bound for implementation/reasoning/output effort.
-- If limits are exceeded on a leaf, split further before emitting.
-- For non-leaf tasks the estimates describe the aggregate of their subtree and may exceed leaf caps; the caps are only hard for leaves.
+- `estimated_context_tokens`: conservative upper bound for the task's own Engineer invocation (description + its own `context_files` + its own prior artifacts such as `prior_feedback`). It is NOT an aggregate over descendants, because descendants are dispatched separately.
+- `estimated_work_tokens`: conservative upper bound for this task's implementation/reasoning/output effort in its single invocation.
+- If limits are exceeded on any task, split further before emitting.
 
 Quality bar for your breakdown:
-- Leaves are independently executable where possible.
-- Dependencies are minimal and explicit; no redundant `depends_on` edges between parents and children.
+- Sibling tasks are independently executable where possible.
+- Dependencies are minimal and explicit; no redundant `depends_on` edges pointing at ancestors/descendants.
 - Acceptance criteria are QA-verifiable from code/diff/tests alone.
-- Context files are sufficient but not excessive.
-- Leaves satisfy token and model-complexity constraints.
+- Context files are sufficient but not excessive, and reflect only what THIS task touches.
+- Every task satisfies token and model-complexity constraints.
 
 Mandatory self-check before returning:
 Run through this checklist; if any item fails, fix the tree and re-check:
@@ -124,14 +135,14 @@ Run through this checklist; if any item fails, fix the tree and re-check:
 - The top-level value is a single Task object (no wrapper with `task_id` or `subtasks`).
 - Every task id matches `^[A-Za-z0-9._-]+$` and is unique across the entire tree.
 - Every `depends_on` entry references an existing task id somewhere in the tree.
-- No task lists itself in its own `depends_on`.
-- No cyclic dependencies across the global graph.
+- No task lists itself, any ancestor, or any descendant in its own `depends_on`.
+- No cyclic dependencies across the combined graph of structural (parent-after-children) and `depends_on` edges.
 - Each node's `tasks` array is sorted by id ascending.
-- Every task has `acceptance_criteria` with all four categories.
+- Every task has `acceptance_criteria` with all four categories, scoped to its own invocation (not its descendants').
 - `solid`, `yagni_kiss`, and `testing` match the required templates verbatim.
 - `functional` has 1-5 concrete, testable items.
-- `context_files` has 1-5 unique specific entries and a non-empty `context_rationale`.
-- Every leaf's `estimated_context_tokens` < 20000 and `estimated_work_tokens` <= 80000.
+- `context_files` has 1-5 unique specific entries (this task's own files only) and a non-empty `context_rationale`.
+- Every task's `estimated_context_tokens` < 20000 and `estimated_work_tokens` <= 80000.
 - `complexity_level` ∈ {"simple","straightforward"}.
 - `target_model_class` == "mid-size-25B".
 - `status` == "pending", `qa_rounds` == 0, `feedback` is null, `tasks` is a (possibly empty) array.

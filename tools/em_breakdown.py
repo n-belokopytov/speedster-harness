@@ -15,8 +15,15 @@ The CLIs in `tools/validate_em_breakdown.py` and
 Model recap:
 - The root JSON value IS a task; a task is `{ id, ..., tasks: [task, ...] }`.
 - Every node carries the full implementation-ready fields.
-- `depends_on` is a global graph by id across the entire tree; parent/child
-  edges are structural and do not need to be repeated there.
+- Every task — leaf or non-leaf — is dispatched to the Engineer as exactly
+  one invocation. A non-leaf task is the *integration* step that runs after
+  all its descendants have been implemented.
+- Execution order is `(all descendants implemented) AND (all depends_on
+  targets implemented)`. Parent/child edges are therefore implicit
+  structural dependencies; `depends_on` must not name ancestors or
+  descendants (redundant with, or cyclic against, the structural edge).
+- The validator checks cycles over the combined graph of structural and
+  `depends_on` edges.
 - There is no `parallel_group`; execution order is derived by the orchestrator
   from the tree + `depends_on` when needed.
 """
@@ -120,25 +127,81 @@ def _validate_structural(breakdown: dict[str, Any]) -> None:
         )
 
 
+def _build_relationships(
+    root: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]], dict[str, set[str]]]:
+    """Return (nodes_by_id, descendants_by_id, ancestors_by_id)."""
+    nodes = {n["id"]: n for n in _iter_tasks(root)}
+
+    parent_of: dict[str, str | None] = {root["id"]: None}
+    for n in _iter_tasks(root):
+        for child in n.get("tasks") or []:
+            parent_of[child["id"]] = n["id"]
+
+    ancestors: dict[str, set[str]] = {}
+    for nid in nodes:
+        anc: set[str] = set()
+        p = parent_of.get(nid)
+        while p is not None:
+            anc.add(p)
+            p = parent_of[p]
+        ancestors[nid] = anc
+
+    descendants: dict[str, set[str]] = {nid: set() for nid in nodes}
+    for nid, ancs in ancestors.items():
+        for a in ancs:
+            descendants[a].add(nid)
+
+    return nodes, descendants, ancestors
+
+
 def _validate_graph(breakdown: dict[str, Any]) -> None:
-    """Dependency-existence, self-loop, and cycle checks across the tree."""
-    nodes = {n["id"]: n for n in _iter_tasks(breakdown)}
+    """Dependency-existence, self-loop, ancestry, and cycle checks.
+
+    Under the execution semantics the orchestrator uses, each task is
+    dispatched after:
+      - every descendant has been implemented (structural edge), AND
+      - every `depends_on` target has been implemented.
+
+    We therefore reject:
+      - `depends_on` referencing unknown ids
+      - self-dependency
+      - dependency on a descendant (redundant with the structural edge)
+      - dependency on an ancestor (creates a cycle with the structural edge)
+      - any cycle in the combined graph of structural + `depends_on` edges.
+    """
+    nodes, descendants, ancestors = _build_relationships(breakdown)
 
     for n in nodes.values():
+        nid = n["id"]
         for dep in n.get("depends_on") or []:
             if dep not in nodes:
                 raise BreakdownValidationError(
-                    f"Task `{n['id']}` depends on unknown task `{dep}`."
+                    f"Task `{nid}` depends on unknown task `{dep}`."
                 )
-            if dep == n["id"]:
-                raise BreakdownValidationError(f"Self-dependency detected in {n['id']}.")
+            if dep == nid:
+                raise BreakdownValidationError(f"Self-dependency detected in {nid}.")
+            if dep in descendants[nid]:
+                raise BreakdownValidationError(
+                    f"Task `{nid}` depends on its own descendant `{dep}` "
+                    "(redundant with the structural child-before-parent edge)."
+                )
+            if dep in ancestors[nid]:
+                raise BreakdownValidationError(
+                    f"Task `{nid}` depends on its ancestor `{dep}` "
+                    "(creates a cycle with the structural child-before-parent edge)."
+                )
 
     indegree: dict[str, int] = {nid: 0 for nid in nodes}
     dependents: dict[str, list[str]] = {nid: [] for nid in nodes}
     for n in nodes.values():
+        nid = n["id"]
+        for child in n.get("tasks") or []:
+            indegree[nid] += 1
+            dependents[child["id"]].append(nid)
         for dep in n.get("depends_on") or []:
-            indegree[n["id"]] += 1
-            dependents[dep].append(n["id"])
+            indegree[nid] += 1
+            dependents[dep].append(nid)
 
     queue: deque[str] = deque(sorted(nid for nid, deg in indegree.items() if deg == 0))
     remaining = dict(indegree)

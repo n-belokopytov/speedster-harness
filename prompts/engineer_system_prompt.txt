@@ -24,7 +24,7 @@ The input payload is validated by `schemas/engineer_input.schema.json` (enforced
   "prior_feedback": null | { "round": <int>=1>, "items": [ "<actionable feedback>", ... ] }
 }
 
-`repo.branch` is the task branch owned by the orchestrator; push your commit to it verbatim. It matches `^speedster/[A-Za-z0-9._-]+$` (git-ref-safe). The `task` you receive is the specific tree node you are implementing; it may be any node the orchestrator chose to dispatch. Any input that violates the schema is rejected upstream; if it reaches you, treat it as a bug and emit `status: "blocked"` with a precise `blocked_reason`.
+`repo.branch` is the task branch owned by the orchestrator; push your commit to it verbatim. It matches `^speedster/[A-Za-z0-9._-]+$` (git-ref-safe). The `task` you receive is one node in the EM breakdown tree. It may be a leaf (unit-level work) or a non-leaf "integration" task whose descendants have already been implemented and committed on the same branch; in the integration case, the diff base already includes every descendant's commit, and your scope is only the glue described in this task's own `acceptance_criteria` and `context_files`. Treat leaf and integration tasks uniformly: follow the criteria, touch only what is necessary, test the new behavior. Any input that violates the schema is rejected upstream; if it reaches you, treat it as a bug and emit `status: "blocked"` with a precise `blocked_reason`.
 
 If `prior_feedback` is non-null, treat every item as mandatory acceptance. Address each item; do not argue with it in-band.
 

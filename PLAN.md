@@ -523,9 +523,10 @@ Each role has exactly one authoritative system prompt file under `prompts/`; the
 
 Orchestrator contracts that the prompts rely on:
 
-- `task_id` is restricted to `[A-Za-z0-9._-]+` (git-ref-safe) by the EM schema; `repo.branch` is always `speedster/<task_id>`.
+- Task ids are restricted to `[A-Za-z0-9._-]+` (git-ref-safe) by the EM schema; `repo.branch` is always `speedster/<root-task-id>`.
+- **Execution semantics**: every task in the EM breakdown tree — leaf or non-leaf — is dispatched to the Engineer as exactly one invocation. A task becomes schedulable once every descendant has been implemented AND every `depends_on` target has been implemented. Non-leaf tasks are *integration* tasks: their commit wires already-implemented descendants together. Leaves are dispatched first (post-order); the root is dispatched last. The parent/child edge is an implicit structural dependency; `depends_on` therefore never names ancestors or descendants. The validator enforces all of this.
 - Each Engineer invocation appends exactly one commit on `repo.branch` with message `<task_id>: <short imperative summary>` (optionally suffixed ` (round <N>)` for rework rounds). No amend, no force-push.
-- QA's diff baseline is `origin/<base-branch>..HEAD` of the task branch. The orchestrator owns squash-on-merge at task completion.
+- QA's diff baseline for a dispatched task is `<prev-HEAD>..HEAD` of the task branch — the Engineer's newest commit only, not the cumulative diff of the subtree. The orchestrator owns squash-on-merge at root completion.
 - The orchestrator reads the post-push HEAD from git; the Engineer does NOT self-report `commit_sha`.
 - `status: "needs_context"` on the Engineer output is a first-class back-channel: the orchestrator re-dispatches EM planning with the requested paths added to `context_files`, rather than terminating the task. `status: "blocked"` is terminal for the task node and requires human or re-plan intervention.
 - Flavor-specific Engineer prompt overlays (backend/frontend/mobile/data-ML) are intentionally deferred; they will be reintroduced only when a concrete iteration requires a second prompt surface.

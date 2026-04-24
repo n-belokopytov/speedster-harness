@@ -10,6 +10,7 @@ import pytest
 
 from em_breakdown import (
     BreakdownValidationError,
+    _build_relationships,
     _iter_tasks,
     _validate_graph,
     _validate_structural,
@@ -310,6 +311,75 @@ class TestValidateGraph:
             ],
         )
         _validate_graph(normalize_breakdown(root))
+
+    def test_depends_on_descendant_rejected(self) -> None:
+        """Parent listing its own descendant in depends_on is redundant with structural edge."""
+        root = _task(
+            "root",
+            depends_on=["child"],
+            children=[_task("child")],
+        )
+        b = normalize_breakdown(root)
+        with pytest.raises(BreakdownValidationError, match="descendant"):
+            _validate_graph(b)
+
+    def test_depends_on_indirect_descendant_rejected(self) -> None:
+        root = _task(
+            "root",
+            depends_on=["grand"],
+            children=[_task("child", children=[_task("grand")])],
+        )
+        b = normalize_breakdown(root)
+        with pytest.raises(BreakdownValidationError, match="descendant"):
+            _validate_graph(b)
+
+    def test_depends_on_ancestor_rejected(self) -> None:
+        """Child depending on its ancestor creates a cycle with the structural edge."""
+        root = _task(
+            "root",
+            children=[_task("child", depends_on=["root"])],
+        )
+        b = normalize_breakdown(root)
+        with pytest.raises(BreakdownValidationError, match="ancestor"):
+            _validate_graph(b)
+
+    def test_structural_plus_depends_on_cycle_detected(self) -> None:
+        """Cycle only visible when structural (child-before-parent) edges are included.
+
+        Tree: root -> [a -> [a1], b -> [b1]]
+        Deps: a1 depends_on b, b1 depends_on a
+        Under beta: b waits for b1 waits for a waits for a1 waits for b (cycle).
+        """
+        root = _task(
+            "root",
+            children=[
+                _task("a", children=[_task("a1", depends_on=["b"])]),
+                _task("b", children=[_task("b1", depends_on=["a"])]),
+            ],
+        )
+        b = normalize_breakdown(root)
+        with pytest.raises(BreakdownValidationError, match="Cyclic"):
+            _validate_graph(b)
+
+
+class TestBuildRelationships:
+    def test_flat_children_have_root_as_ancestor(self) -> None:
+        root = _task("root", children=[_task("a"), _task("b")])
+        nodes, descendants, ancestors = _build_relationships(normalize_breakdown(root))
+        assert set(nodes) == {"root", "a", "b"}
+        assert ancestors["a"] == {"root"}
+        assert ancestors["root"] == set()
+        assert descendants["root"] == {"a", "b"}
+        assert descendants["a"] == set()
+
+    def test_nested_ancestry(self) -> None:
+        root = _task(
+            "root", children=[_task("a", children=[_task("a1", children=[_task("a1x")])])]
+        )
+        _, descendants, ancestors = _build_relationships(normalize_breakdown(root))
+        assert ancestors["a1x"] == {"root", "a", "a1"}
+        assert descendants["root"] == {"a", "a1", "a1x"}
+        assert descendants["a"] == {"a1", "a1x"}
 
 
 # ---------------- load_breakdown ----------------
