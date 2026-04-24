@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
@@ -91,6 +92,12 @@ class EventLog:
             if self.fsync:
                 f.flush()
                 os.fsync(f.fileno())
+
+        print(
+            f"[{event['ts']}] {event['task_id']} | "
+            f"{event['event_type']} | {event['role']} | {event['model']}",
+            flush=True,
+        )
 
         return event
 

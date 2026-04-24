@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -63,9 +64,21 @@ class AgentConfig(BaseModel):
     track_performance: bool = True
     repo_url: str | None = None
     repo_default_branch: str | None = None
-    em_url: str = "http://localhost:8081"
-    eng_url: str = "http://localhost:8082"
-    qa_url: str = "http://localhost:8083"
+    em_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "EM_AGENT_URL", "http://localhost:8081"
+        )
+    )
+    eng_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "ENG_AGENT_URL", "http://localhost:8082"
+        )
+    )
+    qa_url: str = Field(
+        default_factory=lambda: os.getenv(
+            "QA_AGENT_URL", "http://localhost:8083"
+        )
+    )
 
 
 class RunConfig(BaseModel):
