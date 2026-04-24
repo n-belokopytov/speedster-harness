@@ -8,7 +8,11 @@ import json
 import sys
 from pathlib import Path
 
-from em_breakdown import BreakdownValidationError, load_breakdown, normalize_breakdown
+from speedster.contracts.em_breakdown import (
+    BreakdownValidationError,
+    load_breakdown,
+    normalize_breakdown,
+)
 
 
 def main() -> int:

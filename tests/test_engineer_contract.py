@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from engineer_contract import (
+from speedster.contracts.engineer_contract import (
     ContractValidationError,
     _validate_output_structural,
     load_payload,

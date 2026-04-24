@@ -7,7 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from em_breakdown import (
+from speedster.contracts.em_breakdown import (
     DEFAULT_SCHEMA_PATH,
     BreakdownValidationError,
     load_breakdown,

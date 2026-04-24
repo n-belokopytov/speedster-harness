@@ -23,7 +23,7 @@ test = [
 ]
 
 [project.scripts]
-speedster = "speedster.main:cli"
+speedster = "speedster.main:main"
 
 [tool.setuptools.packages.find]
 include = ["speedster*", "agent*"]

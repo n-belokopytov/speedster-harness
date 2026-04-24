@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for QA input validation (schema + structural)."""
+"""CLI for Engineer input validation (schema + structural)."""
 
 from __future__ import annotations
 
@@ -7,19 +7,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from qa_contract import (
+from speedster.contracts.engineer_contract import (
     DEFAULT_INPUT_SCHEMA_PATH,
     ContractValidationError,
     load_payload,
-    validate_qa_input,
+    validate_engineer_input,
 )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate QA input JSON (schema + structural).",
+        description="Validate Engineer input JSON (schema + structural).",
     )
-    parser.add_argument("payload", help="Path to QA input JSON to validate.")
+    parser.add_argument("payload", help="Path to Engineer input JSON to validate.")
     parser.add_argument(
         "--schema",
         default=str(DEFAULT_INPUT_SCHEMA_PATH),
@@ -39,7 +39,7 @@ def main() -> int:
 
     try:
         payload = load_payload(payload_path)
-        validate_qa_input(payload, schema_path=schema_path)
+        validate_engineer_input(payload, schema_path=schema_path)
     except ContractValidationError as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1
@@ -47,7 +47,7 @@ def main() -> int:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1
 
-    print("VALID: qa input passes schema and structural checks.")
+    print("VALID: engineer input passes schema and structural checks.")
     return 0
 
 

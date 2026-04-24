@@ -9,9 +9,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from speedster.config import AgentConfig, EventLogConfig, ModelConfig, RoleConfig
+from speedster.config import (
+    AgentConfig,
+    EventLogConfig,
+    ModelConfig,
+    RolesConfig,
+    RoleConfig,
+    StorageConfig,
+)
 from speedster.event_log import EventLog
-from speedster.orchestrator import Orchestrator, StepResult
+from speedster.models import StepResult
+from speedster.orchestrator import Orchestrator
 from speedster.task_manager import Task
 
 
@@ -177,23 +185,27 @@ def config(tmp_path: Path) -> AgentConfig:
     event_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     return AgentConfig(
-        roles={
-            "em": RoleConfig(
-                model=ModelConfig(model="vllm/em-test"),
-                system_prompt="EM system prompt",
-            ),
-            "engineer": RoleConfig(
-                model=ModelConfig(model="vllm/engineer-test"),
-                system_prompt="Engineer system prompt",
-            ),
-            "qa": RoleConfig(
-                model=ModelConfig(model="vllm/qa-test"),
-                system_prompt="QA system prompt",
-            ),
-        },
-        event_log=EventLogConfig(path=event_log_path),
+        roles=RolesConfig(
+            roles={
+                "em": RoleConfig(
+                    model=ModelConfig(model="vllm/em-test"),
+                    system_prompt="EM system prompt",
+                ),
+                "engineer": RoleConfig(
+                    model=ModelConfig(model="vllm/engineer-test"),
+                    system_prompt="Engineer system prompt",
+                ),
+                "qa": RoleConfig(
+                    model=ModelConfig(model="vllm/qa-test"),
+                    system_prompt="QA system prompt",
+                ),
+            }
+        ),
+        storage=StorageConfig(
+            event_log=EventLogConfig(path=event_log_path),
+            task_dir=tmp_path / "tasks",
+        ),
         max_qa_rounds=3,
-        task_dir=tmp_path / "tasks",
     )
 
 
@@ -234,7 +246,7 @@ class TestOrchestratorInit:
 
 class TestBuildPrompts:
     def test_build_em_prompt(self, orchestrator: Orchestrator, task: Task) -> None:
-        prompt = orchestrator._build_em_prompt(task)
+        prompt = orchestrator.prompt_builder.build_em(task)
         assert "EM system prompt" in prompt
         assert "task-test" in prompt
         assert "Add user authentication" in prompt
@@ -247,7 +259,7 @@ class TestBuildPrompts:
             model="vllm/em-test",
             output=json.dumps(make_valid_breakdown()),
         )
-        prompt = orchestrator._build_engineer_prompt(task, plan, 1)
+        prompt = orchestrator.prompt_builder.build_engineer(task, plan, 1)
         assert "Engineer system prompt" in prompt
         assert "task-test" in prompt
 
@@ -259,7 +271,7 @@ class TestBuildPrompts:
             model="vllm/em-test",
             output=json.dumps(make_valid_breakdown()),
         )
-        prompt = orchestrator._build_engineer_prompt(
+        prompt = orchestrator.prompt_builder.build_engineer(
             task, plan, 2, qa_feedback=["Missing error handling", "Add input validation"]
         )
         assert "QA Feedback" in prompt
@@ -274,7 +286,7 @@ class TestBuildPrompts:
             model="vllm/em-test",
             output=json.dumps(make_valid_breakdown()),
         )
-        prompt = orchestrator._build_engineer_prompt(task, plan, 2, qa_feedback=None)
+        prompt = orchestrator.prompt_builder.build_engineer(task, plan, 2, qa_feedback=None)
         assert "QA Feedback" not in prompt
 
     def test_build_qa_prompt(
@@ -285,7 +297,7 @@ class TestBuildPrompts:
             model="vllm/engineer-test",
             output=json.dumps(make_valid_engineer_output()),
         )
-        prompt = orchestrator._build_qa_prompt(task, engineer_result, 1)
+        prompt = orchestrator.prompt_builder.build_qa(task, engineer_result, 1)
         assert "QA system prompt" in prompt
         assert "task-test" in prompt
         assert "Round 1" in prompt
@@ -293,7 +305,7 @@ class TestBuildPrompts:
     def test_build_em_context_prompt(
         self, orchestrator: Orchestrator, task: Task
     ) -> None:
-        prompt = orchestrator._build_em_context_prompt(
+        prompt = orchestrator.prompt_builder.build_em_context(
             task, requested_context=["src/config.py", "README.md"]
         )
         assert "EM system prompt" in prompt
@@ -314,7 +326,7 @@ class TestProcessTask:
         qa_output = json.dumps(make_valid_qa_output("approved"))
 
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -346,7 +358,7 @@ class TestProcessTask:
         qa_approve = json.dumps(make_valid_qa_output("approved", 2))
 
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -388,7 +400,7 @@ class TestProcessTask:
             ]
         )
 
-        with patch.object(orchestrator.agent_client, "work", work_mock):
+        with patch.object(orchestrator.agent_gateway, "work", work_mock):
             await orchestrator.process_task(task)
 
         calls = work_mock.call_args_list
@@ -412,7 +424,7 @@ class TestEngineerStatuses:
         blocked_output = json.dumps(make_engineer_blocked_output())
 
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -442,7 +454,7 @@ class TestEngineerStatuses:
         qa_output = json.dumps(make_valid_qa_output("approved"))
 
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -476,7 +488,7 @@ class TestEngineerStatuses:
         qa_output = json.dumps(make_valid_qa_output("approved"))
 
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -512,7 +524,7 @@ class TestMaxQARounds:
 
         # Always reject to trigger max rounds
         with patch.object(
-            orchestrator.agent_client,
+            orchestrator.agent_gateway,
             "work",
             new_callable=AsyncMock,
             side_effect=[
@@ -548,25 +560,30 @@ class TestStepResult:
         assert isinstance(result.feedback, list)
         assert result.feedback == ["reason 1", "reason 2"]
 
-    def test_feedback_can_be_string(self) -> None:
+    def test_feedback_default(self) -> None:
         result = StepResult(
             role="qa",
             model="test",
             output="",
-            feedback="All criteria met",
         )
-        assert result.feedback == "All criteria met"
+        assert result.feedback == ["All criteria met"]
+
+    def test_feedback_is_mutable_default(self) -> None:
+        r1 = StepResult(role="qa", model="test", output="")
+        r2 = StepResult(role="qa", model="test", output="")
+        r1.feedback.append("modified")
+        assert r1.feedback != r2.feedback
 
 
 class TestParseOutput:
     def test_parse_valid_json(self, orchestrator: Orchestrator) -> None:
-        result = orchestrator._parse_output('{"key": "value"}')
+        result = orchestrator.response_parser.parse_json('{"key": "value"}')
         assert result == {"key": "value"}
 
     def test_parse_invalid_json(self, orchestrator: Orchestrator) -> None:
-        result = orchestrator._parse_output("not json")
+        result = orchestrator.response_parser.parse_json("not json")
         assert result is None
 
     def test_parse_none(self, orchestrator: Orchestrator) -> None:
-        result = orchestrator._parse_output(None)  # type: ignore
+        result = orchestrator.response_parser.parse_json(None)  # type: ignore[arg-type]
         assert result is None

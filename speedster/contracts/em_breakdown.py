@@ -35,16 +35,21 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
+from speedster.contracts.json_schema import validate_json_schema
+from speedster.exceptions import BreakdownValidationError
+
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "em_breakdown.schema.json"
 
 _SOLID_PREFIX = "The implementation adheres to SOLID principles by "
 _YAGNI_KISS_PREFIX = "The implementation adheres to YAGNI and KISS by "
 _TESTING_PREFIX = "Well-designed unit tests cover "
 _TESTING_REQUIRED_PHRASE = "minimum unit test coverage of 80%+ for touched modules."
-
-
-class BreakdownValidationError(ValueError):
-    """Raised when a breakdown fails schema, structural, or graph checks."""
+__all__ = [
+    "BreakdownValidationError",
+    "load_breakdown",
+    "normalize_breakdown",
+    "validate_breakdown",
+]
 
 
 def _iter_tasks(root: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -218,24 +223,12 @@ def _validate_graph(breakdown: dict[str, Any]) -> None:
         raise BreakdownValidationError(f"Cyclic dependencies detected: {cyclic}")
 
 
-def _validate_json_schema(breakdown: dict[str, Any], schema_path: Path) -> None:
-    try:
-        import jsonschema
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing dependency `jsonschema`. Install with: pip install jsonschema"
-        ) from exc
-    with schema_path.open("r", encoding="utf-8") as f:
-        schema = json.load(f)
-    jsonschema.validate(instance=breakdown, schema=schema)
-
-
 def validate_breakdown(
     breakdown: dict[str, Any],
     schema_path: Path | None = None,
 ) -> None:
     """Validate a breakdown end-to-end (schema + structural + graph)."""
-    _validate_json_schema(breakdown, schema_path or DEFAULT_SCHEMA_PATH)
+    validate_json_schema(breakdown, schema_path or DEFAULT_SCHEMA_PATH)
     _validate_structural(breakdown)
     _validate_graph(breakdown)
 

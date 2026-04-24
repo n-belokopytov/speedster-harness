@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VALIDATE_OUTPUT_CLI = REPO_ROOT / "tools" / "validate_qa_output.py"
-VALIDATE_INPUT_CLI = REPO_ROOT / "tools" / "validate_qa_input.py"
+VALIDATE_OUTPUT_CLI = REPO_ROOT / "speedster" / "cli" / "validate_qa_output.py"
+VALIDATE_INPUT_CLI = REPO_ROOT / "speedster" / "cli" / "validate_qa_input.py"
 
 
 def _engineer_output(branch: str = "speedster/root", task_id: str = "leaf-1") -> dict:

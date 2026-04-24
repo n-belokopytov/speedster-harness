@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from em_breakdown import normalize_breakdown
+from speedster.contracts.em_breakdown import normalize_breakdown
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VALIDATE_CLI = REPO_ROOT / "tools" / "validate_em_breakdown.py"
-NORMALIZE_CLI = REPO_ROOT / "tools" / "normalize_em_breakdown.py"
+VALIDATE_CLI = REPO_ROOT / "speedster" / "cli" / "validate_em_breakdown.py"
+NORMALIZE_CLI = REPO_ROOT / "speedster" / "cli" / "normalize_em_breakdown.py"
 
 
 def _valid_task(tid: str, depends_on: list[str] | None = None, children: list[dict] | None = None) -> dict:

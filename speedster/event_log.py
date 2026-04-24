@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
+
+logger = logging.getLogger(__name__)
 
 
 class EventLog:
@@ -18,9 +21,15 @@ class EventLog:
 
     HEADER = ["seq", "ts", "task_id", "event_type", "role", "model", "message"]
 
-    def __init__(self, path: Path, fsync_on_append: bool = True):
+    def __init__(
+        self,
+        path: Path,
+        fsync_on_append: bool = True,
+        on_event: Callable[[dict], None] | None = None,
+    ):
         self.path = path
         self.fsync = fsync_on_append
+        self._on_event = on_event
         self._last_seq: int = 0
         self._ensure_file()
         self._load_last_seq()
@@ -93,11 +102,17 @@ class EventLog:
                 f.flush()
                 os.fsync(f.fileno())
 
-        print(
-            f"[{event['ts']}] {event['task_id']} | "
-            f"{event['event_type']} | {event['role']} | {event['model']}",
-            flush=True,
+        logger.info(
+            "[%s] %s | %s | %s | %s",
+            event["ts"],
+            event["task_id"],
+            event["event_type"],
+            event["role"],
+            event["model"],
         )
+
+        if self._on_event:
+            self._on_event(event)
 
         return event
 

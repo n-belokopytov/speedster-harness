@@ -1,4 +1,4 @@
-"""Task input loading and status projection from event log."""
+"""Task input loading and management."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from speedster.event_log import EventLog
 
 
 @dataclass
@@ -28,23 +26,11 @@ class Task:
         return self.breakdown is not None
 
 
-@dataclass
-class TaskStatus:
-    """Current status projection for a task derived from event log."""
-
-    task_id: str
-    phase: str  # "pending", "planning", "implementing", "review", "completed", "failed"
-    qa_rounds: int = 0
-    last_event: str = ""
-    last_error: str = ""
-
-
 class TaskManager:
-    """Loads task definitions and exposes status from event replay."""
+    """Loads task definitions and manages breakdown persistence."""
 
-    def __init__(self, task_dir: Path, event_log: EventLog | None = None):
+    def __init__(self, task_dir: Path):
         self.task_dir = task_dir
-        self.event_log = event_log
 
     def load_task(self, task_id: str) -> Task:
         """Load a task definition from tasks/<id>/task.json."""
@@ -90,53 +76,6 @@ class TaskManager:
                     continue
 
         return tasks
-
-    def get_task_status(self, task_id: str) -> TaskStatus | None:
-        """Derive current task status from event log replay."""
-
-        if not self.event_log:
-            return None
-
-        events = self.event_log.get_events_for_task(task_id)
-        if not events:
-            return None
-
-        phase = "pending"
-        qa_rounds = 0
-        last_event = ""
-        last_error = ""
-
-        for event in events:
-            etype = event.get("event_type", "")
-            message = event.get("message", "")
-
-            if etype == "TaskCreated":
-                phase = "pending"
-            elif etype == "PlanningCompleted":
-                phase = "planning"
-            elif etype == "ImplementationCompleted":
-                phase = "implementing"
-                qa_rounds += 1
-            elif etype == "ReviewPassed":
-                phase = "review"
-            elif etype == "ReviewFailed":
-                phase = "implementing"  # loop back to engineer
-                last_error = message
-            elif etype == "TaskCompleted":
-                phase = "completed"
-            elif etype == "TaskFailed":
-                phase = "failed"
-                last_error = message
-
-            last_event = etype
-
-        return TaskStatus(
-            task_id=task_id,
-            phase=phase,
-            qa_rounds=qa_rounds,
-            last_event=last_event,
-            last_error=last_error,
-        )
 
     def save_breakdown(self, task_id: str, breakdown: dict[str, Any]) -> Path:
         """Save an EM breakdown to tasks/<id>/breakdown.json."""

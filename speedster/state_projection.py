@@ -8,12 +8,14 @@ support CLI `resume` and `status` commands.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import Any
 
 from speedster.event_log import EventLog
-
-
-TERMINAL_EVENTS = {"TaskCompleted", "TaskFailed"}
+from speedster.events import (
+    PHASE_TRANSITIONS,
+    TERMINAL_EVENTS,
+    EventType,
+)
 
 
 @dataclass
@@ -29,29 +31,23 @@ class TaskProjection:
     is_terminal: bool = False
 
     def next_step(self) -> str:
-        """Return the next workflow step based on current phase.
-
-        Returns:
-            Step name: "em", "engineer", "qa", or "done"
-        """
-
         if self.is_terminal:
             return "done"
 
-        if not self.last_event_type or self.last_event_type == "TaskCreated":
+        if not self.last_event_type or self.last_event_type == EventType.TASK_CREATED:
             return "em"
 
-        if self.last_event_type == "PlanningCompleted":
+        if self.last_event_type == EventType.PLANNING_COMPLETED:
             return "engineer"
 
-        if self.last_event_type == "ImplementationCompleted":
+        if self.last_event_type == EventType.IMPLEMENTATION_COMPLETED:
             return "qa"
 
-        if self.last_event_type == "ReviewFailed":
-            return "engineer"
-
-        if self.last_event_type == "ContextRequested":
-            return "em"
+        if self.last_event_type in (
+            EventType.REVIEW_FAILED,
+            EventType.CONTEXT_REQUESTED,
+        ):
+            return "engineer" if self.last_event_type == EventType.REVIEW_FAILED else "em"
 
         return "done"
 
@@ -65,13 +61,20 @@ class StateProjection:
 
     def __init__(self, event_log: EventLog):
         self.event_log = event_log
+        self._projections: dict[str, TaskProjection] | None = None
 
     def rebuild(self) -> dict[str, TaskProjection]:
         """Replay all events and return per-task state projections.
 
+        Result is cached on first call. Call invalidate() to force
+        a rebuild if the event log has been appended to.
+
         Returns:
             Dict mapping task_id to TaskProjection
         """
+
+        if self._projections is not None:
+            return self._projections
 
         projections: dict[str, TaskProjection] = {}
 
@@ -91,27 +94,21 @@ class StateProjection:
             proj.last_event = message
             proj.last_event_type = event_type
 
-            if event_type == "TaskCreated":
-                proj.phase = "pending"
-            elif event_type == "PlanningCompleted":
-                proj.phase = "planning"
-            elif event_type == "ImplementationCompleted":
-                proj.phase = "implementing"
+            etype = EventType(event_type)
+            if etype in PHASE_TRANSITIONS:
+                proj.phase = PHASE_TRANSITIONS[etype]
+            if etype == EventType.IMPLEMENTATION_COMPLETED:
                 proj.qa_rounds += 1
-            elif event_type == "ReviewPassed":
-                proj.phase = "review"
-            elif event_type == "ReviewFailed":
-                proj.phase = "implementing"
-            elif event_type == "ContextRequested":
-                proj.phase = "planning"
-            elif event_type == "TaskCompleted":
-                proj.phase = "completed"
-                proj.is_terminal = True
-            elif event_type == "TaskFailed":
-                proj.phase = "failed"
+            if etype in TERMINAL_EVENTS:
                 proj.is_terminal = True
 
+        self._projections = projections
         return projections
+
+    def invalidate(self) -> None:
+        """Invalidate the cached projections to force a rebuild."""
+
+        self._projections = None
 
     def get_non_terminal(self) -> list[TaskProjection]:
         """Return projections for tasks that are not yet in a terminal state."""

@@ -16,7 +16,15 @@ import uvicorn
 
 from agent.config import AgentConfig as AgentServerConfig
 from agent.server import AgentServer
-from speedster.config import AgentConfig, EventLogConfig, ModelConfig, RoleConfig
+from speedster.config import (
+    AgentConfig,
+    ConnectivityConfig,
+    EventLogConfig,
+    ModelConfig,
+    RolesConfig,
+    RoleConfig,
+    StorageConfig,
+)
 from speedster.orchestrator import Orchestrator
 from speedster.task_manager import Task
 
@@ -232,26 +240,32 @@ class TestE2EHTTP:
         )
 
         config = AgentConfig(
-            roles={
-                "em": RoleConfig(
-                    model=ModelConfig(model="vllm/em-e2e"),
-                    system_prompt="EM system prompt",
-                ),
-                "engineer": RoleConfig(
-                    model=ModelConfig(model="vllm/engineer-e2e"),
-                    system_prompt="Engineer system prompt",
-                ),
-                "qa": RoleConfig(
-                    model=ModelConfig(model="vllm/qa-e2e"),
-                    system_prompt="QA system prompt",
-                ),
-            },
-            event_log=EventLogConfig(path=event_log_path),
+            roles=RolesConfig(
+                roles={
+                    "em": RoleConfig(
+                        model=ModelConfig(model="vllm/em-e2e"),
+                        system_prompt="EM system prompt",
+                    ),
+                    "engineer": RoleConfig(
+                        model=ModelConfig(model="vllm/engineer-e2e"),
+                        system_prompt="Engineer system prompt",
+                    ),
+                    "qa": RoleConfig(
+                        model=ModelConfig(model="vllm/qa-e2e"),
+                        system_prompt="QA system prompt",
+                    ),
+                }
+            ),
+            connectivity=ConnectivityConfig(
+                em_url=agent_servers["em"],
+                eng_url=agent_servers["engineer"],
+                qa_url=agent_servers["qa"],
+            ),
+            storage=StorageConfig(
+                event_log=EventLogConfig(path=event_log_path),
+                task_dir=tmp_path / "tasks",
+            ),
             max_qa_rounds=3,
-            task_dir=tmp_path / "tasks",
-            em_url=agent_servers["em"],
-            eng_url=agent_servers["engineer"],
-            qa_url=agent_servers["qa"],
         )
 
         orch = Orchestrator(config)
@@ -298,26 +312,32 @@ class TestE2EHTTP:
         )
 
         config = AgentConfig(
-            roles={
-                "em": RoleConfig(
-                    model=ModelConfig(model="vllm/em-e2e"),
-                    system_prompt="EM system prompt",
-                ),
-                "engineer": RoleConfig(
-                    model=ModelConfig(model="vllm/engineer-e2e"),
-                    system_prompt="Engineer system prompt",
-                ),
-                "qa": RoleConfig(
-                    model=ModelConfig(model="vllm/qa-e2e"),
-                    system_prompt="QA system prompt",
-                ),
-            },
-            event_log=EventLogConfig(path=event_log_path),
+            roles=RolesConfig(
+                roles={
+                    "em": RoleConfig(
+                        model=ModelConfig(model="vllm/em-e2e"),
+                        system_prompt="EM system prompt",
+                    ),
+                    "engineer": RoleConfig(
+                        model=ModelConfig(model="vllm/engineer-e2e"),
+                        system_prompt="Engineer system prompt",
+                    ),
+                    "qa": RoleConfig(
+                        model=ModelConfig(model="vllm/qa-e2e"),
+                        system_prompt="QA system prompt",
+                    ),
+                }
+            ),
+            connectivity=ConnectivityConfig(
+                em_url=agent_servers["em"],
+                eng_url=agent_servers["engineer"],
+                qa_url=agent_servers["qa"],
+            ),
+            storage=StorageConfig(
+                event_log=EventLogConfig(path=event_log_path),
+                task_dir=tmp_path / "tasks",
+            ),
             max_qa_rounds=3,
-            task_dir=tmp_path / "tasks",
-            em_url=agent_servers["em"],
-            eng_url=agent_servers["engineer"],
-            qa_url=agent_servers["qa"],
         )
 
         orch = Orchestrator(config)

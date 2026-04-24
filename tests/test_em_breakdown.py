@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from em_breakdown import (
+from speedster.contracts.em_breakdown import (
     BreakdownValidationError,
     _build_relationships,
     _iter_tasks,

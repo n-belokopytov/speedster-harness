@@ -7,7 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from engineer_contract import (
+from speedster.contracts.engineer_contract import (
     DEFAULT_OUTPUT_SCHEMA_PATH,
     ContractValidationError,
     load_payload,

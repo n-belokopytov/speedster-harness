@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from speedster.contracts.json_schema import validate_json_schema
+
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 DEFAULT_OUTPUT_SCHEMA_PATH = _SCHEMAS_DIR / "qa_output.schema.json"
 DEFAULT_INPUT_SCHEMA_PATH = _SCHEMAS_DIR / "qa_input.schema.json"
@@ -29,18 +31,6 @@ DEFAULT_INPUT_SCHEMA_PATH = _SCHEMAS_DIR / "qa_input.schema.json"
 
 class ContractValidationError(ValueError):
     """Raised when a QA payload fails schema or structural checks."""
-
-
-def _validate_json_schema(payload: dict[str, Any], schema_path: Path) -> None:
-    try:
-        import jsonschema
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing dependency `jsonschema`. Install with: pip install jsonschema"
-        ) from exc
-    with schema_path.open("r", encoding="utf-8") as f:
-        schema = json.load(f)
-    jsonschema.validate(instance=payload, schema=schema)
 
 
 def _iter_verdicts(findings: dict[str, Any]) -> list[str]:
@@ -89,7 +79,7 @@ def validate_qa_output(
     schema_path: Path | None = None,
 ) -> None:
     """Validate a QA output payload end-to-end."""
-    _validate_json_schema(payload, schema_path or DEFAULT_OUTPUT_SCHEMA_PATH)
+    validate_json_schema(payload, schema_path or DEFAULT_OUTPUT_SCHEMA_PATH)
     _validate_output_structural(payload)
 
 
@@ -98,7 +88,7 @@ def validate_qa_input(
     schema_path: Path | None = None,
 ) -> None:
     """Validate a QA input payload against the JSON Schema."""
-    _validate_json_schema(payload, schema_path or DEFAULT_INPUT_SCHEMA_PATH)
+    validate_json_schema(payload, schema_path or DEFAULT_INPUT_SCHEMA_PATH)
 
 
 def load_payload(path: Path) -> dict[str, Any]:

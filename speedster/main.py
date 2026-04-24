@@ -50,8 +50,12 @@ def run(task_id: str | None = None, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
-    orch = Orchestrator(config)
-    asyncio.run(orch.run(task_id))
+
+    async def _run() -> None:
+        async with Orchestrator(config) as orch:
+            await orch.run(task_id)
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -65,37 +69,44 @@ def resume(task_id: str | None = None, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
-    orch = Orchestrator(config)
-    projection = StateProjection(orch.event_log)
 
-    if task_id:
-        proj = projection.get_task(task_id)
-        if not proj:
-            typer.echo(f"Task {task_id} has no events in the log.", err=True)
-            raise typer.Exit(1)
-        if proj.is_terminal:
-            typer.echo(f"Task {task_id} is terminal (phase: {proj.phase}).")
-            raise typer.Exit(0)
-        to_resume = [proj]
-    else:
-        to_resume = projection.get_non_terminal()
-        if not to_resume:
-            typer.echo("No non-terminal tasks to resume.")
-            raise typer.Exit(0)
+    async def _resume() -> None:
+        async with Orchestrator(config) as orch:
+            projection = StateProjection(orch.event_log)
 
-    for proj in to_resume:
-        typer.echo(f"Resuming {proj.task_id} from phase={proj.phase}, next={proj.next_step()}")
-        task = orch.task_manager.load_task(proj.task_id)
-        step = proj.next_step()
+            if task_id:
+                proj = projection.get_task(task_id)
+                if not proj:
+                    typer.echo(f"Task {task_id} has no events in the log.", err=True)
+                    raise typer.Exit(1)
+                if proj.is_terminal:
+                    typer.echo(f"Task {task_id} is terminal (phase: {proj.phase}).")
+                    raise typer.Exit(0)
+                to_resume = [proj]
+            else:
+                to_resume = projection.get_non_terminal()
+                if not to_resume:
+                    typer.echo("No non-terminal tasks to resume.")
+                    raise typer.Exit(0)
 
-        if step == "done":
-            typer.echo(f"  {proj.task_id} is already at terminal state, skipping.")
-            continue
+            for proj in to_resume:
+                typer.echo(
+                    f"Resuming {proj.task_id} from phase={proj.phase}, "
+                    f"next={proj.next_step()}"
+                )
+                task = orch.task_manager.load_task(proj.task_id)
+                step = proj.next_step()
 
-        if step == "em":
-            asyncio.run(orch.process_task(task))
-        else:
-            asyncio.run(orch.process_task(task))
+                if step == "done":
+                    typer.echo(
+                        f"  {proj.task_id} is already at terminal state, skipping."
+                    )
+                    continue
+
+                breakdown = task.breakdown if task.has_breakdown else None
+                await orch.resume_from_step(task, step, breakdown)
+
+    asyncio.run(_resume())
 
 
 @app.command()
@@ -104,27 +115,38 @@ def list_tasks(verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
-    orch = Orchestrator(config)
 
-    tasks = orch.task_manager.list_tasks()
-    projection = StateProjection(orch.event_log)
-    projections = projection.rebuild()
+    async def _list() -> None:
+        async with Orchestrator(config) as orch:
+            tasks = orch.task_manager.list_tasks()
+            projection = StateProjection(orch.event_log)
+            projections = projection.rebuild()
 
-    if not tasks:
-        typer.echo("No tasks found.")
-        return
+            if not tasks:
+                typer.echo("No tasks found.")
+                return
 
-    typer.echo(f"{'Task ID':<20} {'File Status':<12} {'Phase':<14} {'QA Rounds':<10} {'Last Event':<20}")
-    typer.echo("-" * 76)
-
-    for task in tasks:
-        proj = projections.get(task.id)
-        if proj:
             typer.echo(
-                f"{task.id:<20} {task.status:<12} {proj.phase:<14} {proj.qa_rounds:<10} {proj.last_event_type:<20}"
+                f"{'Task ID':<20} {'File Status':<12} "
+                f"{'Phase':<14} {'QA Rounds':<10} {'Last Event':<20}"
             )
-        else:
-            typer.echo(f"{task.id:<20} {task.status:<12} {'pending':<14} {'0':<10} {'no events':<20}")
+            typer.echo("-" * 76)
+
+            for task in tasks:
+                proj = projections.get(task.id)
+                if proj:
+                    typer.echo(
+                        f"{task.id:<20} {task.status:<12} "
+                        f"{proj.phase:<14} {proj.qa_rounds:<10} "
+                        f"{proj.last_event_type:<20}"
+                    )
+                else:
+                    typer.echo(
+                        f"{task.id:<20} {task.status:<12} "
+                        f"{'pending':<14} {'0':<10} {'no events':<20}"
+                    )
+
+    asyncio.run(_list())
 
 
 @app.command()
@@ -133,43 +155,52 @@ def status(task_id: str, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
-    orch = Orchestrator(config)
-    projection = StateProjection(orch.event_log)
 
-    try:
-        task = orch.task_manager.load_task(task_id)
-    except FileNotFoundError:
-        typer.echo(f"Task {task_id} not found in {config.task_dir}.", err=True)
-        raise typer.Exit(1)
+    async def _show_status() -> None:
+        async with Orchestrator(config) as orch:
+            projection = StateProjection(orch.event_log)
 
-    proj = projection.get_task(task_id)
+            try:
+                task = orch.task_manager.load_task(task_id)
+            except FileNotFoundError:
+                typer.echo(
+                    f"Task {task_id} not found in {config.task_dir}.", err=True
+                )
+                raise typer.Exit(1)
 
-    typer.echo(f"Task: {task.id}")
-    typer.echo(f"Description: {task.description}")
-    typer.echo(f"Priority: {task.priority}")
-    typer.echo(f"File Status: {task.status}")
-    typer.echo(f"Has Breakdown: {task.has_breakdown}")
+            proj = projection.get_task(task_id)
 
-    if proj:
-        typer.echo(f"Phase: {proj.phase}")
-        typer.echo(f"Terminal: {proj.is_terminal}")
-        typer.echo(f"QA Rounds: {proj.qa_rounds}")
-        typer.echo(f"Last Event: {proj.last_event_type}")
-        typer.echo(f"Last Message: {proj.last_event}")
-        typer.echo(f"Next Step: {proj.next_step()}")
-        typer.echo(f"Event History:")
-        for i, et in enumerate(proj.event_types):
-            typer.echo(f"  {i + 1}. {et}")
-    else:
-        typer.echo("Phase: pending (no events yet)")
-        typer.echo("Next Step: em")
+            typer.echo(f"Task: {task.id}")
+            typer.echo(f"Description: {task.description}")
+            typer.echo(f"Priority: {task.priority}")
+            typer.echo(f"File Status: {task.status}")
+            typer.echo(f"Has Breakdown: {task.has_breakdown}")
 
-    events = orch.event_log.get_events_for_task(task_id)
-    if events:
-        typer.echo("\nFull Event Log:")
-        for ev in events:
-            typer.echo(f"  [{ev['seq']}] {ev['event_type']} (role={ev['role']}, model={ev['model']})")
-            typer.echo(f"    {ev['message']}")
+            if proj:
+                typer.echo(f"Phase: {proj.phase}")
+                typer.echo(f"Terminal: {proj.is_terminal}")
+                typer.echo(f"QA Rounds: {proj.qa_rounds}")
+                typer.echo(f"Last Event: {proj.last_event_type}")
+                typer.echo(f"Last Message: {proj.last_event}")
+                typer.echo(f"Next Step: {proj.next_step()}")
+                typer.echo(f"Event History:")
+                for i, et in enumerate(proj.event_types):
+                    typer.echo(f"  {i + 1}. {et}")
+            else:
+                typer.echo("Phase: pending (no events yet)")
+                typer.echo("Next Step: em")
+
+            events = orch.event_log.get_events_for_task(task_id)
+            if events:
+                typer.echo("\nFull Event Log:")
+                for ev in events:
+                    typer.echo(
+                        f"  [{ev['seq']}] {ev['event_type']} "
+                        f"(role={ev['role']}, model={ev['model']})"
+                    )
+                    typer.echo(f"    {ev['message']}")
+
+    asyncio.run(_show_status())
 
 
 def main() -> None:

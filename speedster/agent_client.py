@@ -126,7 +126,9 @@ class AgentClient:
                     delay = min(self.retry_delay * (2 ** attempt), 60)
                     await asyncio.sleep(delay)
 
-        raise last_error or httpx.HTTPError(
+        if last_error is not None:
+            raise last_error
+        raise httpx.HTTPError(
             f"Agent work failed after {self.max_retries} attempts"
         )
 
