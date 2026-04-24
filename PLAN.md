@@ -519,7 +519,7 @@ Each role has exactly one authoritative system prompt file under `prompts/`; the
 
 - EM: [`prompts/em_system_prompt.txt`](prompts/em_system_prompt.txt) — output validated by [`schemas/em_breakdown.schema.json`](schemas/em_breakdown.schema.json) via [`tools/validate_em_breakdown.py`](tools/validate_em_breakdown.py).
 - Engineer: [`prompts/engineer_system_prompt.txt`](prompts/engineer_system_prompt.txt) — input validated by [`schemas/engineer_input.schema.json`](schemas/engineer_input.schema.json) and output by [`schemas/engineer_output.schema.json`](schemas/engineer_output.schema.json), both enforced by [`tools/engineer_contract.py`](tools/engineer_contract.py) (CLIs `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`).
-- QA: prompt and schema are defined in Iteration 1's QA task and are not duplicated here.
+- QA: [`prompts/qa_system_prompt.txt`](prompts/qa_system_prompt.txt) — input validated by [`schemas/qa_input.schema.json`](schemas/qa_input.schema.json) and output by [`schemas/qa_output.schema.json`](schemas/qa_output.schema.json), both enforced by [`tools/qa_contract.py`](tools/qa_contract.py) (CLIs `tools/validate_qa_input.py`, `tools/validate_qa_output.py`).
 
 Orchestrator contracts that the prompts rely on:
 
@@ -529,6 +529,9 @@ Orchestrator contracts that the prompts rely on:
 - QA's diff baseline for a dispatched task is `<prev-HEAD>..HEAD` of the task branch — the Engineer's newest commit only, not the cumulative diff of the subtree. The orchestrator owns squash-on-merge at root completion.
 - The orchestrator reads the post-push HEAD from git; the Engineer does NOT self-report `commit_sha`.
 - `status: "needs_context"` on the Engineer output is a first-class back-channel: the orchestrator re-dispatches EM planning with the requested paths added to `context_files`, rather than terminating the task. `status: "blocked"` is terminal for the task node and requires human or re-plan intervention.
+- QA input carries the task node, the post-push `commit` SHA, the `<prev-HEAD>..HEAD` `diff`, the Engineer's JSON output for that commit, and the 1-based `round` counter. QA input schema guarantees `engineer_output.status == "implemented"`; the orchestrator never dispatches QA on `blocked` or `needs_context` outputs.
+- QA output maps to event-log transitions deterministically: `status: "approved"` appends `ReviewPassed` and then `TaskCompleted`; `status: "rejected"` appends `ReviewFailed` and re-dispatches the Engineer with `prior_feedback.items = qa_output.rejection_reasons` and `prior_feedback.round = qa_output.round + 1`. The QA `rejection_reasons` list is consumed verbatim and satisfies the Engineer input schema's per-item length and count constraints.
+- A single non-`met` verdict in any QA finding (functional/solid/yagni_kiss/testing) forces `status: "rejected"`; the structural validator rejects approval-with-uncertain outputs so the quality-first invariant is enforced end-to-end.
 - Flavor-specific Engineer prompt overlays (backend/frontend/mobile/data-ML) are intentionally deferred; they will be reintroduced only when a concrete iteration requires a second prompt surface.
 
 ## Implementation Iterations
@@ -640,7 +643,7 @@ Use these as release gates. An iteration is complete only when all checklist ite
 - Role configs support different models for `em`, `engineer`, and `qa`
 - Agent HTTP server responds on `/work` and `/health`
 - Orchestrator can execute EM -> Engineer -> QA loop for one task
-- Output validator rejects malformed EM/Engineer/QA JSON and triggers retry (EM: `tools/validate_em_breakdown.py`; Engineer: `tools/validate_engineer_output.py`)
+- Output validator rejects malformed EM/Engineer/QA JSON and triggers retry (EM: `tools/validate_em_breakdown.py`; Engineer: `tools/validate_engineer_output.py`; QA: `tools/validate_qa_output.py`)
 - Example task input exists and can be executed end-to-end
 
 #### Acceptance Checklist

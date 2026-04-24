@@ -219,6 +219,14 @@ Engineer contract:
 - Library: `tools/engineer_contract.py`
 - Validator CLIs: `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`
 
+QA contract:
+
+- Prompt: `prompts/qa_system_prompt.txt`
+- Input schema (orchestrator → agent): `schemas/qa_input.schema.json`
+- Output schema (agent → orchestrator): `schemas/qa_output.schema.json`
+- Library: `tools/qa_contract.py`
+- Validator CLIs: `tools/validate_qa_input.py`, `tools/validate_qa_output.py`
+
 Example workflow:
 
 ```bash
@@ -231,6 +239,12 @@ python3 tools/validate_engineer_input.py tasks/task-001/engineer-input.json
 
 # 3) Validate the Engineer's JSON response before recording ImplementationCompleted
 python3 tools/validate_engineer_output.py tasks/task-001/engineer-output.json
+
+# 4) Validate a QA input payload before dispatch
+python3 tools/validate_qa_input.py tasks/task-001/qa-input.json
+
+# 5) Validate the QA's JSON response before recording ReviewPassed/ReviewFailed
+python3 tools/validate_qa_output.py tasks/task-001/qa-output.json
 ```
 
 Optional setup (for schema validation dependency):
