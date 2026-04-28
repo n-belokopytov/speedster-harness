@@ -38,9 +38,6 @@ Git operations are wired into the agent and orchestrator.
 - `orchestrator.py:57-71` — `run()` finds one pending task, processes it, and returns
 - Needed: continuous loop that polls `tasks/` for new `pending` tasks, processes them sequentially
 
-### AGENTS.md
-Created at `AGENTS.md` with role prompt governance and operating guardrails.
-
 ## Resolved
 
 The following items previously listed as pending are now implemented:
@@ -53,7 +50,6 @@ The following items previously listed as pending are now implemented:
 - **tools/ CLI validators:** all 6 exist in `speedster/cli/`; docs updated to match
 - **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
 - **AGENTS.md:** Role prompt governance and operating guardrails (Iteration 6)
-- **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
 
 ## Deferred (Future Iterations)
 
