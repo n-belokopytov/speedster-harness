@@ -6,11 +6,14 @@ This file lists where the **current repository** (code, layout, and automation) 
 
 ## Remaining Items
 
-### OpenCode ACP Integration
-The agent server (`agent/server.py`) is in **mock mode**. The `_process_message` method returns canned JSON responses instead of calling the model. When `_mock_mode = False`, it raises `NotImplementedError`.
+### OpenCode ACP Integration (Wired)
+The agent server is wired to `ACPClient` when `mock_mode=False`. The `ACPClient` spawns `opencode --model <model> --stdin` via `subprocess.run()` and parses JSON output.
 
-- `agent/server.py:149-157` — `_process_message` needs to wire through to the OpenCode ACP server or vLLM API
-- System prompts from `prompts/*.txt` need to be loaded and sent with each `/work` call
+- `agent/acp_client.py` — implemented with timeout, error handling, JSON parsing
+- `agent/server.py:170-176` — `_process_message` delegates to `ACPClient.process_message()` in non-mock mode
+- `tests/test_server.py` — unit tests cover non-mock delegation, HTTP 500 error propagation, `MOCK_MODE` env variable
+- `tests/test_e2e.py` — `TestE2ERealModel` class with `xfail` marker; requires reachable model endpoint to pass
+- **Remaining:** Real-model E2E tests are `xfail` until `opencode` CLI + model endpoint are reachable
 
 ### Git Integration (Iteration 3)
 No git operations are implemented. The orchestrator records `ImplementationCompleted` events but does not read the post-push HEAD SHA, create branches, or push code.
