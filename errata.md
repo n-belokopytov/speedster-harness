@@ -38,20 +38,8 @@ Git operations are wired into the agent and orchestrator.
 - `orchestrator.py:57-71` — `run()` finds one pending task, processes it, and returns
 - Needed: continuous loop that polls `tasks/` for new `pending` tasks, processes them sequentially
 
-### tools/ CLI Wrappers (Path Discrepancy)
-[PLAN.md](PLAN.md) and [README.md](README.md) reference validator CLIs under `tools/`, but they live in `speedster/cli/`:
-
-| PLAN.md path | Actual path |
-|---|---|
-| `tools/validate_em_breakdown.py` | `speedster/cli/validate_em_breakdown.py` |
-| `tools/validate_engineer_input.py` | `speedster/cli/validate_engineer_input.py` |
-| `tools/validate_engineer_output.py` | `speedster/cli/validate_engineer_output.py` |
-| `tools/validate_qa_input.py` | `speedster/cli/validate_qa_input.py` |
-| `tools/validate_qa_output.py` | `speedster/cli/validate_qa_output.py` |
-| `tools/normalize_em_breakdown.py` | `speedster/cli/normalize_em_breakdown.py` |
-
 ### AGENTS.md
-Missing. [PLAN.md](PLAN.md) Iteration 6 calls for `AGENTS.md` with role prompt governance and operating guardrails.
+Created at `AGENTS.md` with role prompt governance and operating guardrails.
 
 ## Resolved
 
@@ -62,7 +50,9 @@ The following items previously listed as pending are now implemented:
 - **Docker Compose agents:** `docker-compose.yml` with `em-agent`, `engineer-agent`, `qa-agent` services
 - **Agent Dockerfile:** `agent/Dockerfile` exists with role/model build args
 - **Agent entry point:** `agent/main.py` starts FastAPI server with config validation
-- **tools/ CLI validators:** all 6 exist in `speedster/cli/` (see path discrepancy above)
+- **tools/ CLI validators:** all 6 exist in `speedster/cli/`; docs updated to match
+- **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
+- **AGENTS.md:** Role prompt governance and operating guardrails (Iteration 6)
 - **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
 
 ## Deferred (Future Iterations)

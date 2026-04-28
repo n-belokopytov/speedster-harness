@@ -51,7 +51,7 @@ The orchestrator must not silently implement one while the other is assumed by t
 
 - **Agent API:** [PLAN.md](PLAN.md) — `POST /work` body `{ "message", "session_id" }`, response with `output`, `tokens_used`, `latency_ms`.
 - **Harness repo:** [PLAN.md](PLAN.md) *Harness run input* — `repo.url` and `repo.default_branch` come from the harness, not from `task.json` / `breakdown.json`; persist in durable state (e.g. `TaskCreated` message or header row if you add one).
-- **Validation:** Reuse or mirror `tools/validate_em_breakdown.py`, `validate_engineer_input.py`, `validate_engineer_output.py`, `validate_qa_input.py`, `validate_qa_output.py` so CI and runtime share one contract.
+- **Validation:** Reuse or mirror `speedster/cli/validate_em_breakdown.py`, `speedster/cli/validate_engineer_input.py`, `speedster/cli/validate_engineer_output.py`, `speedster/cli/validate_qa_input.py`, `speedster/cli/validate_qa_output.py` so CI and runtime share one contract.
 
 ## What to defer (keep orchestrator thin)
 
@@ -93,4 +93,4 @@ The orchestrator must not silently implement one while the other is assumed by t
 ## References
 
 - [PLAN.md](PLAN.md) — architecture, HTTP API, CSV schema, `Orchestrator` pseudocode, iterations, checklists, Prompt Design.
-- `schemas/*.schema.json` and `tools/*_contract.py` — runtime and CI contracts for each role.
+- `schemas/*.schema.json` and `speedster/contracts/*_contract.py` — runtime and CI contracts for each role.

@@ -229,43 +229,43 @@ EM planning:
 
 - Prompt: `prompts/em_system_prompt.txt`
 - Schema: `schemas/em_breakdown.schema.json`
-- Validator CLI (schema + dependency graph checks): `tools/validate_em_breakdown.py`
-- Normalizer CLI: `tools/normalize_em_breakdown.py`
+- Validator CLI (schema + dependency graph checks): `speedster/cli/validate_em_breakdown.py`
 
+- Normalizer CLI: `speedster/cli/normalize_em_breakdown.py`
 Engineer contract:
 
 - Prompt: `prompts/engineer_system_prompt.txt`
 - Input schema (orchestrator → agent): `schemas/engineer_input.schema.json`
 - Output schema (agent → orchestrator): `schemas/engineer_output.schema.json`
-- Library: `tools/engineer_contract.py`
-- Validator CLIs: `tools/validate_engineer_input.py`, `tools/validate_engineer_output.py`
+- Library: `speedster/contracts/engineer_contract.py`
 
+- Validator CLIs: `speedster/cli/validate_engineer_input.py`, `speedster/cli/validate_engineer_output.py`
 QA contract:
 
 - Prompt: `prompts/qa_system_prompt.txt`
 - Input schema (orchestrator → agent): `schemas/qa_input.schema.json`
 - Output schema (agent → orchestrator): `schemas/qa_output.schema.json`
-- Library: `tools/qa_contract.py`
-- Validator CLIs: `tools/validate_qa_input.py`, `tools/validate_qa_output.py`
+- Library: `speedster/contracts/qa_contract.py`
 
+- Validator CLIs: `speedster/cli/validate_qa_input.py`, `speedster/cli/validate_qa_output.py`
 Example workflow:
 
 ```bash
 # 1) Generate breakdown JSON using your EM model and prompt template
 # (save output to tasks/task-001/breakdown.json)
-python3 tools/validate_em_breakdown.py tasks/task-001/breakdown.json
+python3 speedster/cli/validate_em_breakdown.py tasks/task-001/breakdown.json
 
 # 2) Validate an Engineer input payload before dispatch
-python3 tools/validate_engineer_input.py tasks/task-001/engineer-input.json
+python3 speedster/cli/validate_engineer_input.py tasks/task-001/engineer-input.json
 
 # 3) Validate the Engineer's JSON response before recording ImplementationCompleted
-python3 tools/validate_engineer_output.py tasks/task-001/engineer-output.json
+python3 speedster/cli/validate_engineer_output.py tasks/task-001/engineer-output.json
 
 # 4) Validate a QA input payload before dispatch
-python3 tools/validate_qa_input.py tasks/task-001/qa-input.json
+python3 speedster/cli/validate_qa_input.py tasks/task-001/qa-input.json
 
 # 5) Validate the QA's JSON response before recording ReviewPassed/ReviewFailed
-python3 tools/validate_qa_output.py tasks/task-001/qa-output.json
+python3 speedster/cli/validate_qa_output.py tasks/task-001/qa-output.json
 ```
 
 Optional setup (for schema validation dependency):

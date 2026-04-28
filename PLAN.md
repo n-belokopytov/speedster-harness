@@ -442,7 +442,7 @@ The following modules are not described in this plan's original spec but have be
 - **`speedster/exceptions.py`** ✅ — Exception hierarchy (`ValidationError`, `OrchestratorError`, etc.)
 - **`speedster/response_parser.py`** ✅ — JSON parsing + QA response to `StepResult` conversion
 - **`speedster/contracts/`** ✅ — Schema validation modules (`em_breakdown.py`, `engineer_contract.py`, `qa_contract.py`)
-- **`speedster/cli/`** ✅ — Standalone CLI validators (6 scripts referenced as `tools/` in Prompt Design section)
+- **`speedster/cli/`** ✅ — Standalone CLI validators (6 scripts)
 
 ## Harness run input (target repository)
 
