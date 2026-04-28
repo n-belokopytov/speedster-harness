@@ -1,19 +1,21 @@
 """Minimal workflow orchestrator for Iteration 1 vertical slice.
 
-Drives the EM -> Engineer -> QA loop for a single task. Uses mocks/stubs
-for git until GitHandler exists in Iteration 3.
+Drives the EM -> Engineer -> QA loop for a single task with git
+integration for branch management and merge tracking.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Callable
 
 from speedster.agent_client import AgentClient, AgentResponse
 from speedster.config import AgentConfig, default_config
 from speedster.event_log import EventLog
 from speedster.events import EventType
+from speedster.git_handler import GitHandler
 from speedster.interfaces import AgentGateway, EventStore
 from speedster.models import StepResult
 from speedster.output_validator import OutputValidator, ValidationError
@@ -27,7 +29,8 @@ logger = logging.getLogger(__name__)
 class Orchestrator:
     """Workflow state machine for EM -> Engineer -> QA loop.
 
-    Iteration 1: Single task vertical slice with minimal state management.
+    Iteration 3: Includes git integration for branch-per-task workflow
+    with merge tracking and diff retrieval.
     """
 
     def __init__(
@@ -37,6 +40,7 @@ class Orchestrator:
         agent_gateway: AgentGateway | None = None,
         validator: OutputValidator | None = None,
         task_manager: TaskManager | None = None,
+        git_handler: GitHandler | None = None,
     ):
         self.config = config or default_config()
         self.event_log: EventStore = event_store or EventLog(self.config.event_log.path)
@@ -45,6 +49,7 @@ class Orchestrator:
         self.validator = validator or OutputValidator()
         self.prompt_builder = PromptBuilder(self.config)
         self.response_parser = ResponseParser()
+        self.git_handler = git_handler
         self._owns_gateway = agent_gateway is None
 
     async def __aenter__(self) -> Orchestrator:
@@ -53,6 +58,8 @@ class Orchestrator:
     async def __aexit__(self, *args: Any) -> None:
         if self._owns_gateway:
             await self.agent_gateway.close()
+        if self.git_handler:
+            self.git_handler.cleanup()
 
     async def run(self, task_id: str | None = None) -> None:
         """Run the orchestrator loop.
@@ -238,12 +245,27 @@ class Orchestrator:
 
             round_num += 1
 
+            branch = engineer_result.branch or ""
+            commit_sha = engineer_result.commit_sha or ""
+
+            # Record branch/commit with git handler if available
+            if self.git_handler:
+                self.git_handler.record_implementation(
+                    task_id, branch, commit_sha
+                )
+
+            impl_message = f"round={round_num}"
+            if branch:
+                impl_message += f", branch={branch}"
+            if commit_sha:
+                impl_message += f", commit={commit_sha}"
+
             self.event_log.append(
                 task_id,
                 EventType.IMPLEMENTATION_COMPLETED,
                 "engineer",
                 engineer_result.model,
-                f"round={round_num}",
+                impl_message,
             )
 
             qa_result = await self._run_qa(task, engineer_result, round_num)
@@ -258,12 +280,36 @@ class Orchestrator:
             )
 
             if qa_result.approved:
+                merge_sha = ""
+                if self.git_handler:
+                    try:
+                        merge_sha = self.git_handler.merge_to_main(
+                            task_id,
+                            merge_message=f"Merge task {task_id} (approved by QA)",
+                        )
+                        logger.info(
+                            "Merged task %s into %s: %s",
+                            task_id,
+                            self.config.repo_default_branch or "main",
+                            merge_sha[:7],
+                        )
+                    except Exception as merge_exc:
+                        logger.warning(
+                            "Failed to merge task %s: %s",
+                            task_id,
+                            merge_exc,
+                        )
+
+                completed_message = "Terminal state reached"
+                if merge_sha:
+                    completed_message += f", merged={merge_sha[:7]}"
+
                 self.event_log.append(
                     task_id,
                     EventType.TASK_COMPLETED,
                     "orchestrator",
                     "",
-                    "Terminal state reached",
+                    completed_message,
                 )
                 logger.info("Task %s completed after %d round(s)", task_id, round_num)
                 break

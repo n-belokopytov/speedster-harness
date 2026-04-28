@@ -15,13 +15,16 @@ The agent server is wired to `ACPClient` when `mock_mode=False`. The `ACPClient`
 - `tests/test_e2e.py` — `TestE2ERealModel` class with `xfail` marker; requires reachable model endpoint to pass
 - **Remaining:** Real-model E2E tests are `xfail` until `opencode` CLI + model endpoint are reachable
 
-### Git Integration (Iteration 3)
-No git operations are implemented. The orchestrator records `ImplementationCompleted` events but does not read the post-push HEAD SHA, create branches, or push code.
+### Git Integration (Iteration 3) - Implemented
+Git operations are wired into the agent and orchestrator.
 
-- `agent/git_client.py` — missing entirely; needs clone/push support with SSH key auth
-- `speedster/git_handler.py` — missing entirely; needs branch-per-task, merge flow, diff retrieval
-- `orchestrator.py:241-247` — logs `ImplementationCompleted` with `round=N` but not `branch=` or `commit=`
-- `agent/config.py:20-25` — `git_ssh_key` and `repo_root` are defined but unused
+- `agent/git_client.py` — implemented: clone, branch, commit, push, diff, SSH key auth
+- `speedster/git_handler.py` — implemented: branch-per-task, merge flow, diff retrieval for QA
+- `orchestrator.py` — `ImplementationCompleted` events now include branch and commit SHA
+- `orchestrator.py` — `TaskCompleted` events trigger merge to default branch
+- `tests/test_git_client.py` — 12 tests with real git repos
+- `tests/test_git_handler.py` — 9 tests (unit + integration)
+- **Remaining:** End-to-end merge flow with remote push not yet tested (requires remote repo)
 
 ### Docker Compose: Orchestrator Service
 `docker-compose.yml` has all three agent services but **no orchestrator service**. The orchestrator currently runs locally via `speedster run` CLI.
@@ -60,6 +63,7 @@ The following items previously listed as pending are now implemented:
 - **Agent Dockerfile:** `agent/Dockerfile` exists with role/model build args
 - **Agent entry point:** `agent/main.py` starts FastAPI server with config validation
 - **tools/ CLI validators:** all 6 exist in `speedster/cli/` (see path discrepancy above)
+- **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
 
 ## Deferred (Future Iterations)
 

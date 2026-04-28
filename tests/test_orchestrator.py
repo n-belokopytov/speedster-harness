@@ -587,3 +587,105 @@ class TestParseOutput:
     def test_parse_none(self, orchestrator: Orchestrator) -> None:
         result = orchestrator.response_parser.parse_json(None)  # type: ignore[arg-type]
         assert result is None
+
+
+class TestOrchestratorGitIntegration:
+    """Tests for orchestrator git handler integration."""
+
+    @pytest.fixture
+    def mock_git_handler(self) -> MagicMock:
+        """Create a mock GitHandler."""
+
+        handler = MagicMock()
+        handler.record_implementation = MagicMock()
+        handler.merge_to_main = MagicMock(return_value="abcdef1234567890")
+        handler.cleanup = MagicMock()
+        return handler
+
+    @pytest.mark.asyncio
+    async def test_implementation_event_includes_branch(
+        self, mock_git_handler: MagicMock, tmp_path: Path
+    ) -> None:
+        """ImplementationCompleted event should include branch and commit."""
+
+        event_log_path = tmp_path / "events.csv"
+        task_dir = tmp_path / "tasks"
+        task_git_dir = task_dir / "task-git"
+        task_git_dir.mkdir(parents=True)
+        (task_git_dir / "task.json").write_text(
+            json.dumps({
+                "id": "task-git",
+                "description": "Git integration test",
+                "priority": "high",
+                "status": "pending",
+            })
+        )
+
+        config = AgentConfig(
+            roles=RolesConfig(
+                roles={
+                    "em": RoleConfig(
+                        model=ModelConfig(model="vllm/em-test"),
+                        system_prompt="EM prompt",
+                    ),
+                    "engineer": RoleConfig(
+                        model=ModelConfig(model="vllm/engineer-test"),
+                        system_prompt="Engineer prompt",
+                    ),
+                    "qa": RoleConfig(
+                        model=ModelConfig(model="vllm/qa-test"),
+                        system_prompt="QA prompt",
+                    ),
+                }
+            ),
+            storage=StorageConfig(
+                event_log=EventLogConfig(path=event_log_path),
+                task_dir=task_dir,
+            ),
+            max_qa_rounds=3,
+        )
+
+        event_log = EventLog(event_log_path)
+
+        # Build valid responses for EM, Engineer, QA
+        breakdown = make_valid_breakdown()
+        breakdown["id"] = "task-git"
+        eng_output = make_valid_engineer_output()
+        eng_output["task_id"] = "task-git"
+        eng_output["branch"] = "speedster/task-git"
+        qa_output = make_valid_qa_output("approved")
+        qa_output["task_id"] = "task-git"
+
+        mock_gateway = AsyncMock()
+        mock_gateway.work = AsyncMock(
+            side_effect=[
+                MagicMock(output=json.dumps(breakdown), tokens_used=100, latency_ms=50),
+                MagicMock(output=json.dumps(eng_output), tokens_used=100, latency_ms=50),
+                MagicMock(output=json.dumps(qa_output), tokens_used=100, latency_ms=50),
+            ]
+        )
+        mock_gateway.close = AsyncMock()
+
+        orch = Orchestrator(
+            config=config,
+            event_store=event_log,
+            agent_gateway=mock_gateway,
+            git_handler=mock_git_handler,
+        )
+
+        task = orch.task_manager.load_task("task-git")
+        await orch.process_task(task)
+
+        # Verify git handler was called
+        mock_git_handler.record_implementation.assert_called_once()
+        call_args = mock_git_handler.record_implementation.call_args
+        assert call_args[0][0] == "task-git"
+        assert call_args[0][1] == "speedster/task-git"
+
+        # Verify merge was called on TaskCompleted
+        mock_git_handler.merge_to_main.assert_called_once()
+
+        # Verify events contain branch info
+        events = list(event_log.replay())
+        impl_event = [e for e in events if e["event_type"] == "ImplementationCompleted"][0]
+        assert "branch=speedster/task-git" in impl_event["message"]
