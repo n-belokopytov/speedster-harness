@@ -256,3 +256,45 @@ class TestACPClientInit:
         assert client.model == "vllm/custom-model"
         assert client.timeout_seconds == 300
         assert client.workspace_root == workspace_root
+
+
+class TestACPClientGitSSHKey:
+    """Test GIT_SSH_COMMAND env injection when git_ssh_key is configured."""
+
+    def test_git_ssh_key_set_in_env(
+        self, system_prompt_path: Path, workspace_root: Path
+    ) -> None:
+        """GIT_SSH_COMMAND is set in subprocess env when git_ssh_key is provided."""
+
+        client = ACPClient(
+            role="engineer",
+            model="vllm/test",
+            system_prompt_path=system_prompt_path,
+            workspace_root=workspace_root,
+            git_ssh_key="/run/secrets/github_ssh_key",
+        )
+
+        with patch("agent.acp_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=json.dumps({"ok": True}), stderr=""
+            )
+            client.process_message("test")
+
+            env = mock_run.call_args.kwargs["env"]
+            assert "GIT_SSH_COMMAND" in env
+            assert "/run/secrets/github_ssh_key" in env["GIT_SSH_COMMAND"]
+            assert "StrictHostKeyChecking=no" in env["GIT_SSH_COMMAND"]
+
+    def test_git_ssh_key_not_set_when_absent(
+        self, acp_client: ACPClient
+    ) -> None:
+        """GIT_SSH_COMMAND is absent from env when git_ssh_key is None."""
+
+        with patch("agent.acp_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=json.dumps({"ok": True}), stderr=""
+            )
+            acp_client.process_message("test")
+
+            env = mock_run.call_args.kwargs["env"]
+            assert "GIT_SSH_COMMAND" not in env or not env.get("GIT_SSH_COMMAND")

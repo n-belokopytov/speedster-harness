@@ -18,6 +18,7 @@ from pathlib import Path
 import typer
 
 from speedster.config import AgentConfig, default_config
+from speedster.git_handler import GitHandler
 from speedster.orchestrator import Orchestrator
 from speedster.state_projection import StateProjection
 
@@ -35,6 +36,26 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _create_git_handler(config: AgentConfig) -> GitHandler | None:
+    """Create a GitHandler from configuration.
+
+    Reads REPO_URL and GIT_SSH_KEY from config.
+    Returns None if repo_url is not set.
+    """
+
+    if not config.repo_url:
+        return None
+
+    ssh_key_path = Path(config.git_ssh_key) if config.git_ssh_key else None
+
+    git_handler = GitHandler(
+        repo_url=config.repo_url,
+        ssh_key_path=ssh_key_path,
+    )
+    git_handler.setup()
+    return git_handler
+
+
 def _load_config() -> AgentConfig:
     prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
     return default_config(prompts_dir=prompts_dir)
@@ -50,9 +71,10 @@ def run(task_id: str | None = None, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
+    git_handler = _create_git_handler(config)
 
     async def _run() -> None:
-        async with Orchestrator(config) as orch:
+        async with Orchestrator(config, git_handler=git_handler) as orch:
             await orch.run(task_id)
 
     asyncio.run(_run())
@@ -69,9 +91,10 @@ def resume(task_id: str | None = None, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
+    git_handler = _create_git_handler(config)
 
     async def _resume() -> None:
-        async with Orchestrator(config) as orch:
+        async with Orchestrator(config, git_handler=git_handler) as orch:
             projection = StateProjection(orch.event_log)
 
             if task_id:

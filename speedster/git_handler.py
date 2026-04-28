@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from agent.git_client import GitClient, GitError
+from speedster.git.git_client import GitClient, GitError
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class GitHandler:
             raise KeyError(f"No branch recorded for task {task_id}")
 
         # Fetch the branch from remote
-        self.git_client._git("fetch", "origin", branch_name)
+        self.git_client.fetch("origin", branch_name)
 
         # Checkout the branch and get diff
         self.git_client.checkout(branch_name)
@@ -169,7 +169,7 @@ class GitHandler:
             raise KeyError(f"No branch recorded for task {task_id}")
 
         # Ensure we have latest default branch
-        self.git_client._git("fetch", "origin", self.default_branch)
+        self.git_client.fetch("origin", self.default_branch)
         self.git_client.checkout(f"origin/{self.default_branch}")
 
         message = merge_message or f"Merge task {task_id}: {branch_name}"
@@ -203,7 +203,7 @@ class GitHandler:
 
         # Fetch latest branch state from remote
         try:
-            self.git_client._git("fetch", "origin", branch_name)
+            self.git_client.fetch("origin", branch_name)
             self.git_client.checkout(branch_name)
             commit_sha = self.git_client.get_head_sha()
         except GitError:

@@ -40,11 +40,14 @@ services:
       PORT: 8080
       TOOLS_CONFIG: /app/agent/tools/engineer.yaml
       REPO_ROOT: /workspace
+      GIT_SSH_KEY: /run/secrets/github_ssh_key
+      REPO_URL: ${REPO_URL:-}
     ports:
       - "${ENG_AGENT_PORT:-8082}:8080"
     volumes:
       - ./:/workspace
       - ./state:/app/state
+      - ${SSH_KEY_PATH:-~/.ssh/id_speedster}:/run/secrets/github_ssh_key:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 10s

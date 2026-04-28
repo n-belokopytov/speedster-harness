@@ -95,7 +95,12 @@ class AgentConfig(BaseModel):
         "qa": 32768,
     }
     track_performance: bool = True
-    repo_url: str | None = None
+    repo_url: str | None = Field(
+        default_factory=lambda: os.getenv("REPO_URL", "") or None
+    )
+    git_ssh_key: str | None = Field(
+        default_factory=lambda: os.getenv("GIT_SSH_KEY", "") or None
+    )
     repo_default_branch: str | None = None
 
     @property
