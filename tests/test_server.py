@@ -279,6 +279,7 @@ class TestServerGitClient:
             call_kwargs = MockGitClient.call_args.kwargs
             assert call_kwargs["repo_url"] == "git@github.com:test/repo.git"
             assert str(call_kwargs["ssh_key_path"]) == "/run/secrets/github_ssh_key"
+            assert str(call_kwargs["repo_root"]) == str(system_prompt_path / "repo")
 
     def test_git_client_clone_called_on_init(
         self, system_prompt_path: Path

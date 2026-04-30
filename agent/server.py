@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from agent.acp_client import ACPClient, ACPResponse
 from agent.config import AgentConfig
-from speedster.git.git_client import GitClient
+from agent.git_client import GitClient
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,10 @@ class AgentServer:
             )
 
             if config.role == "engineer" and config.git_ssh_key and config.repo_url:
+                repo_path = Path(config.repo_root) / "repo"
                 self._git_client = GitClient(
                     repo_url=config.repo_url,
-                    repo_root=Path(config.repo_root),
+                    repo_root=repo_path,
                     ssh_key_path=Path(config.git_ssh_key),
                 )
                 self._git_client.clone()

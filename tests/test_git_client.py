@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from speedster.git.git_client import GitClient, GitError
+from agent.git_client import GitClient, GitError
 
 
 def _init_test_repo(path: Path) -> str:
