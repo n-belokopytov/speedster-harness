@@ -101,7 +101,9 @@ class AgentConfig(BaseModel):
     git_ssh_key: str | None = Field(
         default_factory=lambda: os.getenv("GIT_SSH_KEY", "") or None
     )
-    repo_default_branch: str | None = None
+    repo_default_branch: str | None = Field(
+        default_factory=lambda: os.getenv("REPO_DEFAULT_BRANCH", "") or None
+    )
 
     @property
     def event_log(self) -> EventLogConfig:

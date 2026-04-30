@@ -27,21 +27,17 @@ Git operations are wired into the agent and orchestrator.
 - **Remaining:** End-to-end merge flow with remote push not yet tested (requires remote repo)
 
 ### Docker Compose: Orchestrator Service
-`docker-compose.yml` has all three agent services but **no orchestrator service**. The orchestrator currently runs locally via `speedster run` CLI.
-
-- Missing `orchestrator` service definition with `depends_on: [em-agent, engineer-agent, qa-agent]`
-- Missing orchestrator Dockerfile (reuses `agent/Dockerfile` context or needs its own)
+`docker-compose.yml` now includes the `orchestrator` service with `depends_on: [em-agent, engineer-agent, qa-agent]` (health-check gated). `speedster/Dockerfile` builds the orchestrator container.
 
 ### Orchestrator Watch Mode
-`speedster run` processes a single task and exits. There is no polling loop to watch for new tasks.
-
-- `orchestrator.py:57-71` — `run()` finds one pending task, processes it, and returns
-- Needed: continuous loop that polls `tasks/` for new `pending` tasks, processes them sequentially
+`speedster run --watch` polls for new pending tasks on a configurable interval (default 30s) until `SIGINT`/`SIGTERM`. The Docker orchestrator service defaults to watch mode via `ENTRYPOINT speedster run --watch`.
 
 ## Resolved
 
 The following items previously listed as pending are now implemented:
 
+- **Docker Compose orchestrator service:** `docker-compose.yml` orchestrator service with health-gated `depends_on`, `speedster/Dockerfile`
+- **Orchestrator watch mode:** `speedster run --watch` with configurable poll interval
 - **CLI (`speedster/main.py`):** `run`, `list`, `resume`, `status` commands all implemented (Iteration 6, pulled forward)
 - **State projection (`speedster/state_projection.py`):** event replay, per-task state reconstruction, non-terminal resume (Iteration 2, pulled forward)
 - **Docker Compose agents:** `docker-compose.yml` with `em-agent`, `engineer-agent`, `qa-agent` services

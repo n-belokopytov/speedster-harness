@@ -135,6 +135,19 @@ class TestGitHandlerWithRealGit:
 
         assert (handler.work_dir / "repo" / ".git").exists()
 
+    def test_get_diff_for_qa_uses_public_fetch(self, handler: GitHandler) -> None:
+        """get_diff_for_qa should use public fetch method, not _git."""
+
+        handler.record_implementation("task-001", "speedster/task-001", "abc123")
+
+        with patch.object(handler.git_client, "fetch", new_callable=MagicMock):
+            with patch.object(handler.git_client, "checkout", new_callable=MagicMock):
+                with patch.object(handler.git_client, "get_diff", return_value=""):
+                    handler.get_diff_for_qa("task-001")
+                    handler.git_client.fetch.assert_called_once_with(
+                        "origin", "speedster/task-001"
+                    )
+
     def test_prepare_branch_and_record(self, handler: GitHandler) -> None:
         """prepare_branch should return correct branch name."""
 
