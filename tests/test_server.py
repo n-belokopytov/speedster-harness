@@ -248,3 +248,145 @@ class TestMockModeEnvVariable:
         with patch.dict(os.environ, {"MOCK_MODE": "1"}):
             config = AgentConfig(mock_mode=False)
             assert config.mock_mode is False
+
+
+class TestServerGitClient:
+    """Test GitClient creation and clone() in AgentServer.__init__."""
+
+    def test_git_client_created_for_engineer_with_ssh_and_url(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient is instantiated for engineer role when SSH key and repo URL are set."""
+
+        mock_git = MagicMock()
+        mock_acp = MagicMock()
+
+        with patch("agent.server.ACPClient", return_value=mock_acp), \
+             patch("agent.server.GitClient", return_value=mock_git) as MockGitClient:
+            config = AgentConfig(
+                role="engineer",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=False,
+                git_ssh_key="/run/secrets/github_ssh_key",
+                repo_url="git@github.com:test/repo.git",
+            )
+            AgentServer(config)
+
+            MockGitClient.assert_called_once()
+            call_kwargs = MockGitClient.call_args.kwargs
+            assert call_kwargs["repo_url"] == "git@github.com:test/repo.git"
+            assert str(call_kwargs["ssh_key_path"]) == "/run/secrets/github_ssh_key"
+            assert str(call_kwargs["repo_root"]) == str(system_prompt_path / "repo")
+
+    def test_git_client_clone_called_on_init(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient.clone() is called during AgentServer.__init__."""
+
+        mock_git = MagicMock()
+        mock_acp = MagicMock()
+
+        with patch("agent.server.ACPClient", return_value=mock_acp), \
+             patch("agent.server.GitClient", return_value=mock_git):
+            config = AgentConfig(
+                role="engineer",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=False,
+                git_ssh_key="/run/secrets/github_ssh_key",
+                repo_url="git@github.com:test/repo.git",
+            )
+            AgentServer(config)
+
+            mock_git.clone.assert_called_once()
+
+    def test_git_client_not_created_for_em_role(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient is NOT created for non-engineer roles."""
+
+        mock_acp = MagicMock()
+
+        with patch("agent.server.ACPClient", return_value=mock_acp), \
+             patch("agent.server.GitClient") as MockGitClient:
+            config = AgentConfig(
+                role="em",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=False,
+                git_ssh_key="/run/secrets/github_ssh_key",
+                repo_url="git@github.com:test/repo.git",
+            )
+            AgentServer(config)
+
+            MockGitClient.assert_not_called()
+
+    def test_git_client_not_created_without_ssh_key(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient is NOT created when git_ssh_key is not configured."""
+
+        mock_acp = MagicMock()
+
+        with patch("agent.server.ACPClient", return_value=mock_acp), \
+             patch("agent.server.GitClient") as MockGitClient:
+            config = AgentConfig(
+                role="engineer",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=False,
+            )
+            AgentServer(config)
+
+            MockGitClient.assert_not_called()
+
+    def test_git_client_not_created_without_repo_url(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient is NOT created when repo_url is not configured."""
+
+        mock_acp = MagicMock()
+
+        with patch("agent.server.ACPClient", return_value=mock_acp), \
+             patch("agent.server.GitClient") as MockGitClient:
+            config = AgentConfig(
+                role="engineer",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=False,
+                git_ssh_key="/run/secrets/github_ssh_key",
+            )
+            AgentServer(config)
+
+            MockGitClient.assert_not_called()
+
+    def test_git_client_not_created_in_mock_mode(
+        self, system_prompt_path: Path
+    ) -> None:
+        """GitClient is NOT created when mock_mode is True."""
+
+        with patch("agent.server.GitClient") as MockGitClient:
+            config = AgentConfig(
+                role="engineer",
+                model="vllm/test",
+                host="127.0.0.1",
+                port=9999,
+                repo_root=str(system_prompt_path),
+                mock_mode=True,
+                git_ssh_key="/run/secrets/github_ssh_key",
+                repo_url="git@github.com:test/repo.git",
+            )
+            AgentServer(config)
+
+            MockGitClient.assert_not_called()

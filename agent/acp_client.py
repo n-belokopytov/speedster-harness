@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ class ACPClient:
         system_prompt_path: Path,
         workspace_root: Path,
         timeout_seconds: int = 600,
+        git_ssh_key: str | None = None,
     ):
         """Initialize ACPClient.
 
@@ -48,6 +50,7 @@ class ACPClient:
             system_prompt_path: Path to the role's system prompt file.
             workspace_root: Absolute path to the working directory.
             timeout_seconds: Deadline for each subprocess invocation.
+            git_ssh_key: Path to SSH private key for git authentication.
         """
 
         self.role = role
@@ -55,6 +58,7 @@ class ACPClient:
         self.system_prompt_path = system_prompt_path
         self.workspace_root = workspace_root
         self.timeout_seconds = timeout_seconds
+        self.git_ssh_key = git_ssh_key
 
         self._system_prompt = system_prompt_path.read_text(encoding="utf-8")
 
@@ -76,6 +80,10 @@ class ACPClient:
 
         full_prompt = self._build_prompt(message)
 
+        env = os.environ.copy()
+        if self.git_ssh_key:
+            env["GIT_SSH_COMMAND"] = f"ssh -i {self.git_ssh_key} -o StrictHostKeyChecking=no"
+
         try:
             result = subprocess.run(
                 ["opencode", "--model", self.model, "--stdin"],
@@ -84,6 +92,7 @@ class ACPClient:
                 capture_output=True,
                 timeout=self.timeout_seconds,
                 cwd=str(self.workspace_root),
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(

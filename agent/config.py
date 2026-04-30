@@ -23,6 +23,9 @@ class AgentConfig:
     repo_root: str = field(
         default_factory=lambda: os.getenv("REPO_ROOT", "/workspace")
     )
+    repo_url: str = field(
+        default_factory=lambda: os.getenv("REPO_URL", "")
+    )
     mock_mode: bool = field(
         default_factory=lambda: os.getenv("MOCK_MODE", "1") == "1"
     )

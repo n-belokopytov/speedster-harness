@@ -19,4 +19,4 @@ COPY tools/ ./tools/
 
 EXPOSE 8080
 
-CMD ["python", "-m", "agent.main"]
+ENTRYPOINT ["sh", "-c", "chmod 600 /run/secrets/github_ssh_key 2>/dev/null; exec python -m agent.main"]

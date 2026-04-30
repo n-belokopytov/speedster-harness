@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -47,7 +46,6 @@ class GitClient:
         self.repo_root = repo_root
         self.ssh_key_path = ssh_key_path
         self.default_branch = default_branch
-        self._ssh_agent_socket: str | None = None
 
     def _git(self, *args: str, capture: bool = True) -> subprocess.CompletedProcess[str]:
         """Run a git command in the repo root.
@@ -63,10 +61,6 @@ class GitClient:
             GitError: If the git command returns non-zero.
         """
 
-        env = os.environ.copy()
-        if self.ssh_key_path:
-            env["GIT_SSH_COMMAND"] = f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"
-
         cmd = ["git", "-C", str(self.repo_root), *args]
 
         try:
@@ -75,7 +69,7 @@ class GitClient:
                 capture_output=capture,
                 text=True,
                 timeout=120,
-                env=env,
+                env=self._ssh_env(),
                 cwd=str(self.repo_root),
             )
         except subprocess.TimeoutExpired as exc:
@@ -107,17 +101,13 @@ class GitClient:
         logger.info("Cloning %s into %s", self.repo_url, self.repo_root)
         self.repo_root.mkdir(parents=True, exist_ok=True)
 
-        env = os.environ.copy()
-        if self.ssh_key_path:
-            env["GIT_SSH_COMMAND"] = f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"
-
         try:
             result = subprocess.run(
                 ["git", "clone", self.repo_url, str(self.repo_root)],
                 capture_output=True,
                 text=True,
                 timeout=300,
-                env=env,
+                env=self._ssh_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise GitError(f"Clone timed out after 300s: {self.repo_url}") from exc
@@ -127,6 +117,19 @@ class GitClient:
             raise GitError(f"Clone failed: {stderr}")
 
         logger.info("Clone successful")
+
+    def fetch(self, remote: str, ref: str) -> None:
+        """Fetch a specific ref from a remote.
+
+        Args:
+            remote: Remote name (e.g., 'origin').
+            ref: Branch or ref to fetch (e.g., 'main', 'speedster/task-001').
+
+        Raises:
+            GitError: If fetch fails.
+        """
+
+        self._git("fetch", remote, ref)
 
     def create_branch(self, branch_name: str) -> None:
         """Create and checkout a new branch from the default branch.
@@ -138,10 +141,7 @@ class GitClient:
             GitError: If branch creation fails.
         """
 
-        # Fetch latest default branch
-        self._git("fetch", "origin", self.default_branch)
-
-        # Create and checkout branch
+        self.fetch("origin", self.default_branch)
         self._git("checkout", "-B", branch_name, f"origin/{self.default_branch}")
         logger.info("Created branch %s from origin/%s", branch_name, self.default_branch)
 
@@ -167,7 +167,6 @@ class GitClient:
             GitError: If commit fails.
         """
 
-        # Skip if there are no changes
         status_result = self._git("status", "--porcelain")
         if not status_result.stdout.strip():
             logger.info("No changes to commit")
@@ -310,3 +309,11 @@ class GitClient:
 
         safe_id = task_id.replace("/", "-").replace(" ", "_")
         return f"speedster/{safe_id}"
+
+    def _ssh_env(self) -> dict[str, str]:
+        """Build environment dict with GIT_SSH_COMMAND when SSH key is set."""
+
+        env = os.environ.copy()
+        if self.ssh_key_path:
+            env["GIT_SSH_COMMAND"] = f"ssh -i {self.ssh_key_path} -o StrictHostKeyChecking=no"
+        return env

@@ -12,16 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import signal
 import sys
 from pathlib import Path
 
 import typer
 
 from speedster.config import AgentConfig, default_config
+from speedster.git_handler import GitHandler
 from speedster.orchestrator import Orchestrator
 from speedster.state_projection import StateProjection
 
-app = typer(help="Speedster - Autonomous agent orchestrator")
+app = typer.Typer(help="Speedster - Autonomous agent orchestrator")
 
 logger = logging.getLogger("speedster")
 
@@ -35,25 +37,89 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _create_git_handler(config: AgentConfig) -> GitHandler | None:
+    """Create a GitHandler from configuration.
+
+    Reads REPO_URL and GIT_SSH_KEY from config.
+    Returns None if repo_url is not set.
+    """
+
+    if not config.repo_url:
+        return None
+
+    ssh_key_path = Path(config.git_ssh_key) if config.git_ssh_key else None
+
+    git_handler = GitHandler(
+        repo_url=config.repo_url,
+        ssh_key_path=ssh_key_path,
+        default_branch=config.repo_default_branch or "main",
+    )
+    git_handler.setup()
+    return git_handler
+
+
 def _load_config() -> AgentConfig:
     prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
     return default_config(prompts_dir=prompts_dir)
 
 
 @app.command()
-def run(task_id: str | None = None, verbose: bool = False) -> None:
+def run(
+    task_id: str | None = None,
+    verbose: bool = False,
+    watch: bool = False,
+    poll_interval: int = 30,
+) -> None:
     """Process a task end-to-end (EM -> Engineer -> QA loop).
 
     If TASK_ID is provided, process that specific task.
     Otherwise, find the first pending task and process it.
+
+    In watch mode, polls for new pending tasks on a loop until
+    SIGINT/SIGTERM.
     """
 
     _configure_logging(verbose)
     config = _load_config()
+    git_handler = _create_git_handler(config)
+
+    shutdown_event = asyncio.Event()
 
     async def _run() -> None:
-        async with Orchestrator(config) as orch:
-            await orch.run(task_id)
+        loop = asyncio.get_running_loop()
+
+        def _handle_signal(signum: int) -> None:
+            sig_name = signal.Signals(signum).name
+            logger.info("Received %s, shutting down...", sig_name)
+            shutdown_event.set()
+
+        loop.add_signal_handler(signal.SIGINT, _handle_signal, signal.SIGINT)
+        loop.add_signal_handler(signal.SIGTERM, _handle_signal, signal.SIGTERM)
+
+        async with Orchestrator(config, git_handler=git_handler) as orch:
+            if watch:
+                logger.info(
+                    "Watch mode: polling for tasks every %ds (press Ctrl+C to stop)",
+                    poll_interval,
+                )
+                while not shutdown_event.is_set():
+                    tasks = orch.task_manager.list_tasks()
+                    pending = [t for t in tasks if t.status == "pending"]
+                    if pending:
+                        task = pending[0]
+                        logger.info("Processing task: %s", task.id)
+                        await orch.process_task(task)
+                        logger.info("Task %s completed", task.id)
+                    else:
+                        logger.info("No pending tasks, waiting %ds...", poll_interval)
+                        try:
+                            await asyncio.wait_for(
+                                shutdown_event.wait(), timeout=poll_interval
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+            else:
+                await orch.run(task_id)
 
     asyncio.run(_run())
 
@@ -69,9 +135,10 @@ def resume(task_id: str | None = None, verbose: bool = False) -> None:
 
     _configure_logging(verbose)
     config = _load_config()
+    git_handler = _create_git_handler(config)
 
     async def _resume() -> None:
-        async with Orchestrator(config) as orch:
+        async with Orchestrator(config, git_handler=git_handler) as orch:
             projection = StateProjection(orch.event_log)
 
             if task_id:

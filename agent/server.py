@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from agent.acp_client import ACPClient, ACPResponse
 from agent.config import AgentConfig
+from agent.git_client import GitClient
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ class AgentServer:
         self._mock_mode = config.mock_mode
 
         self._acp_client: ACPClient | None = None
+        self._git_client: GitClient | None = None
+
         if not self._mock_mode:
             prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
             system_prompt_path = prompts_dir / f"{config.role}_system_prompt.txt"
@@ -87,7 +90,17 @@ class AgentServer:
                 model=config.model,
                 system_prompt_path=system_prompt_path,
                 workspace_root=Path(config.repo_root),
+                git_ssh_key=config.git_ssh_key,
             )
+
+            if config.role == "engineer" and config.git_ssh_key and config.repo_url:
+                repo_path = Path(config.repo_root) / "repo"
+                self._git_client = GitClient(
+                    repo_url=config.repo_url,
+                    repo_root=repo_path,
+                    ssh_key_path=Path(config.git_ssh_key),
+                )
+                self._git_client.clone()
 
         self._register_routes()
 
