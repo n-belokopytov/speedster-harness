@@ -85,15 +85,9 @@ class AgentServer:
         if not self._mock_mode:
             prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
             system_prompt_path = prompts_dir / f"{config.role}_system_prompt.txt"
-            self._acp_client = ACPClient(
-                role=config.role,
-                model=config.model,
-                system_prompt_path=system_prompt_path,
-                workspace_root=Path(config.repo_root),
-                git_ssh_key=config.git_ssh_key,
-            )
 
-            if config.role == "engineer" and config.git_ssh_key and config.repo_url:
+            repo_path = None
+            if config.git_ssh_key and config.repo_url:
                 repo_path = Path(config.repo_root) / "repo"
                 self._git_client = GitClient(
                     repo_url=config.repo_url,
@@ -102,7 +96,15 @@ class AgentServer:
                 )
                 self._git_client.clone()
 
-        self._register_routes()
+            self._acp_client = ACPClient(
+                role=config.role,
+                model=config.model,
+                system_prompt_path=system_prompt_path,
+                workspace_root=repo_path or Path(config.repo_root),
+           git_ssh_key=config.git_ssh_key,
+            )
+
+            self._register_routes()
 
     def _register_routes(self) -> None:
         """Register HTTP routes."""
