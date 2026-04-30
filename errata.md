@@ -7,35 +7,16 @@ This file lists where the **current repository** (code, layout, and automation) 
 ## Remaining Items
 
 ### OpenCode ACP Integration (Wired)
-The agent server is wired to `ACPClient` when `mock_mode=False`. The `ACPClient` spawns `opencode --model <model> --stdin` via `subprocess.run()` and parses JSON output.
-
-- `agent/acp_client.py` — implemented with timeout, error handling, JSON parsing
-- `agent/server.py:170-176` — `_process_message` delegates to `ACPClient.process_message()` in non-mock mode
-- `tests/test_server.py` — unit tests cover non-mock delegation, HTTP 500 error propagation, `MOCK_MODE` env variable
-- `tests/test_e2e.py` — `TestE2ERealModel` class with `xfail` marker; requires reachable model endpoint to pass
 - **Remaining:** Real-model E2E tests are `xfail` until `opencode` CLI + model endpoint are reachable
 
 ### Git Integration (Iteration 3) - Implemented
-Git operations are wired into the agent and orchestrator.
-
-- `agent/git_client.py` — implemented: clone, branch, commit, push, diff, SSH key auth
-- `speedster/git_handler.py` — implemented: branch-per-task, merge flow, diff retrieval for QA
-- `orchestrator.py` — `ImplementationCompleted` events now include branch and commit SHA
-- `orchestrator.py` — `TaskCompleted` events trigger merge to default branch
-- `tests/test_git_client.py` — 12 tests with real git repos
-- `tests/test_git_handler.py` — 9 tests (unit + integration)
 - **Remaining:** End-to-end merge flow with remote push not yet tested (requires remote repo)
-
-### Docker Compose: Orchestrator Service
-`docker-compose.yml` now includes the `orchestrator` service with `depends_on: [em-agent, engineer-agent, qa-agent]` (health-check gated). `speedster/Dockerfile` builds the orchestrator container.
-
-### Orchestrator Watch Mode
-`speedster run --watch` polls for new pending tasks on a configurable interval (default 30s) until `SIGINT`/`SIGTERM`. The Docker orchestrator service defaults to watch mode via `ENTRYPOINT speedster run --watch`.
 
 ## Resolved
 
 The following items previously listed as pending are now implemented:
-
+`speedster run --watch` polls for new pending tasks on a configurable interval (default 30s) until `SIGINT`/`SIGTERM`. The Docker orchestrator service defaults to watch mode via `ENTRYPOINT speedster run --watch`.
+`docker-compose.yml` now includes the `orchestrator` service with `depends_on: [em-agent, engineer-agent, qa-agent]` (health-check gated). `speedster/Dockerfile` builds the orchestrator container.
 - **Docker Compose orchestrator service:** `docker-compose.yml` orchestrator service with health-gated `depends_on`, `speedster/Dockerfile`
 - **Orchestrator watch mode:** `speedster run --watch` with configurable poll interval
 - **CLI (`speedster/main.py`):** `run`, `list`, `resume`, `status` commands all implemented (Iteration 6, pulled forward)
@@ -46,6 +27,21 @@ The following items previously listed as pending are now implemented:
 - **tools/ CLI validators:** all 6 exist in `speedster/cli/`; docs updated to match
 - **Git Integration:** `agent/git_client.py`, `speedster/git_handler.py`, orchestrator merge flow (Iteration 3)
 - **AGENTS.md:** Role prompt governance and operating guardrails (Iteration 6)
+
+- `agent/git_client.py` — implemented: clone, branch, commit, push, diff, SSH key auth
+- `speedster/git_handler.py` — implemented: branch-per-task, merge flow, diff retrieval for QA
+Git operations are wired into the agent and orchestrator.
+
+- `orchestrator.py` — `ImplementationCompleted` events now include branch and commit SHA
+- `orchestrator.py` — `TaskCompleted` events trigger merge to default branch
+- `tests/test_git_client.py` — 12 tests with real git repos
+- `tests/test_git_handler.py` — 9 tests (unit + integration)
+- `agent/acp_client.py` — implemented with timeout, error handling, JSON parsing
+- `agent/server.py:170-176` — `_process_message` delegates to `ACPClient.process_message()` in non-mock mode
+- `tests/test_server.py` — unit tests cover non-mock delegation, HTTP 500 error propagation, `MOCK_MODE` env variable
+- `tests/test_e2e.py` — `TestE2ERealModel` class with `xfail` marker; requires reachable model endpoint to pass
+
+
 
 ## Deferred (Future Iterations)
 
