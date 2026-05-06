@@ -10,6 +10,6 @@ repos:
     hooks:
       - id: shellcheck
         name: ShellCheck
-        entry: shellcheck -S
+        entry: shellcheck -S warning
         language: system
         files: (opencode-setup|setup)\.sh$

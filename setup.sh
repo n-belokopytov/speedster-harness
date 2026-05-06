@@ -16,6 +16,7 @@
 #   --help                Show this message
 #
 
+# shellcheck source=./setup/lib.sh
 source "$(dirname "$0")/setup/lib.sh"
 
 PHASES=("prerequisites" "venv" "dependencies" "precommit" "directories" "dockercompose" "opencode" "validate")
@@ -162,6 +163,13 @@ for phase in "${PHASES[@]}"; do
     if [[ "$phase" != "opencode" ]]; then
         local_script="${SCRIPT_DIR}/setup/${phase}.sh"
         if [[ -f "$local_script" ]]; then
+            # shellcheck source=setup/prerequisites.sh
+            # shellcheck source=setup/venv.sh
+            # shellcheck source=setup/dependencies.sh
+            # shellcheck source=setup/precommit.sh
+            # shellcheck source=setup/directories.sh
+            # shellcheck source=setup/dockercompose.sh
+            # shellcheck source=setup/validate.sh
             source "$local_script"
         else
             fail "Phase script not found: ${local_script}" >&2
