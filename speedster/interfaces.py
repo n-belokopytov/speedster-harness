@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator, Protocol
+from typing import TYPE_CHECKING, Any, Iterator, Protocol
 
 if TYPE_CHECKING:
     from speedster.agent_client import AgentResponse
@@ -31,7 +31,7 @@ class AgentGateway(Protocol):
     async def work(
         self,
         url: str,
-        message: str,
+        payload: dict[str, Any],
         session_id: str | None = None,
     ) -> "AgentResponse": ...
 

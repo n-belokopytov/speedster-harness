@@ -111,7 +111,7 @@ class AgentServer:
                git_ssh_key=config.git_ssh_key,
             )
 
-            self._register_routes()
+        self._register_routes()
 
     def _register_routes(self) -> None:
         """Register HTTP routes."""
