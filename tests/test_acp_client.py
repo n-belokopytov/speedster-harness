@@ -186,7 +186,6 @@ class TestACPClientProcessMessage:
     ) -> None:
         """Missing opencode binary raises RuntimeError."""
 
-        import subprocess as sp
 
         with patch("agent.acp_client.subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()

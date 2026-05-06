@@ -8,6 +8,11 @@ repos:
       - id: check-json
   - repo: local
     hooks:
+      - id: ruff
+        name: Ruff (Python lint)
+        entry: ruff check
+        language: system
+        types: [python]
       - id: shellcheck
         name: ShellCheck
         entry: shellcheck -S warning

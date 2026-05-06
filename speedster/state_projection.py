@@ -8,7 +8,6 @@ support CLI `resume` and `status` commands.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from speedster.event_log import EventLog
 from speedster.events import (

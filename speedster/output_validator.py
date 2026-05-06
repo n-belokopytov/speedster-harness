@@ -64,7 +64,7 @@ class OutputValidator:
         if isinstance(data, str):
             try:
                 data = json.loads(data)
-            except json.JSONDecodeError as exc:
+            except json.JSONDecodeError:
                 return None
 
         if not isinstance(data, dict):
