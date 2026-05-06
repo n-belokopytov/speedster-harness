@@ -485,7 +485,7 @@ class TestE2ERealModel:
                     "priority": "high",
                     "status": "pending",
                 })
-      )
+            )
 
             config = AgentConfig(
                 connectivity=ConnectivityConfig(
