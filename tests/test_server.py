@@ -132,13 +132,17 @@ class TestProcessMessageNonMock:
     ) -> None:
         """WorkResponse carries tokens_used and latency_ms from ACPClient."""
 
-        request = WorkRequest(message="test message")
+        request = WorkRequest(
+            task_id="test-001",
+            description="Test message",
+        )
 
         import asyncio
 
         response = asyncio.run(agent_server_nonmock.handle_work(request))
 
         assert isinstance(response, WorkResponse)
+        assert response.model == "vllm/test"
         assert response.tokens_used == 150
         assert response.latency_ms >= 0
 
@@ -196,7 +200,10 @@ class TestHTTP500ErrorPropagation:
 
         import asyncio
 
-        request = WorkRequest(message="test message")
+        request = WorkRequest(
+            task_id="test-001",
+            description="Test message",
+        )
 
         with pytest.raises(Exception) as exc_info:
             asyncio.run(server.handle_work(request))
@@ -389,3 +396,64 @@ class TestServerGitClient:
             AgentServer(config)
 
             MockGitClient.assert_not_called()
+
+
+class TestPerRoleModelEnvVar:
+    """Test per-role model env var resolution (EM_MODEL, ENGINEER_MODEL, QA_MODEL)."""
+
+    def test_em_role_uses_em_model_env(self) -> None:
+        """EM role reads model from EM_MODEL env var."""
+
+        with patch.dict(os.environ, {"EM_MODEL": "vllm/em-specific"}):
+            config = AgentConfig(role="em")
+            assert config.model == "vllm/em-specific"
+
+    def test_engineer_role_uses_engineer_model_env(self) -> None:
+        """Engineer role reads model from ENGINEER_MODEL env var."""
+
+        with patch.dict(os.environ, {"ENGINEER_MODEL": "vllm/eng-specific"}):
+            config = AgentConfig(role="engineer")
+            assert config.model == "vllm/eng-specific"
+
+    def test_qa_role_uses_qa_model_env(self) -> None:
+        """QA role reads model from QA_MODEL env var."""
+
+        with patch.dict(os.environ, {"QA_MODEL": "vllm/qa-specific"}):
+            config = AgentConfig(role="qa")
+            assert config.model == "vllm/qa-specific"
+
+    def test_explicit_model_overrides_env_vars(self) -> None:
+        """Explicit model argument overrides all env vars."""
+
+        with patch.dict(os.environ, {
+            "EM_MODEL": "vllm/em-specific",
+        }):
+            config = AgentConfig(role="em", model="vllm/explicit")
+            assert config.model == "vllm/explicit"
+
+    def test_all_roles_can_have_different_models(self) -> None:
+        """Each role resolves its own per-role model independently."""
+
+        with patch.dict(os.environ, {
+            "EM_MODEL": "vllm/em-35B",
+            "ENGINEER_MODEL": "vllm/eng-70B",
+            "QA_MODEL": "vllm/qa-35B",
+        }):
+            em_config = AgentConfig(role="em")
+            eng_config = AgentConfig(role="engineer")
+            qa_config = AgentConfig(role="qa")
+
+            assert em_config.model == "vllm/em-35B"
+            assert eng_config.model == "vllm/eng-70B"
+            assert qa_config.model == "vllm/qa-35B"
+
+    def test_empty_model_raises_validation_error(self) -> None:
+        """When per-role env var is unset, validate raises ValueError."""
+
+        env_copy = os.environ.copy()
+        env_copy.pop("EM_MODEL", None)
+
+        with patch.dict(os.environ, env_copy, clear=True):
+            config = AgentConfig(role="em")
+            with pytest.raises(ValueError, match="EM_MODEL is required"):
+                config.validate()

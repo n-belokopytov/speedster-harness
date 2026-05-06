@@ -56,7 +56,7 @@ The following items previously listed as pending are now implemented:
 - Global concurrency cap so review quality remains stable
 
 ### Iteration 5: Context Management + Quality Hardening
-- `speedster/message_builder.py` (currently `prompt_builder.py`) with role-specific context windows and bounded prompt assembly
+- `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly
 - Chunking/summarization protocol for overflow cases
 - `speedster/performance_tracker.py` for per-role metrics
 - Integration and regression tests for retry, resume, and QA feedback loops

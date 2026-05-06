@@ -3,7 +3,9 @@
 Starts the FastAPI HTTP server with the configured role and model.
 Environment variables:
     ROLE: Agent role (em, engineer, qa)
-    MODEL: Model identifier (e.g., vllm/default)
+    EM_MODEL: Model identifier for EM agent (required)
+    ENGINEER_MODEL: Model identifier for engineer agent (required)
+    QA_MODEL: Model identifier for QA agent (required)
     HOST: Bind address (default: 0.0.0.0)
     PORT: Bind port (default: 8080)
     TOOLS_CONFIG: Path to tools configuration YAML

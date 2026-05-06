@@ -95,12 +95,11 @@ tasks/                          speedster/                    agent/            
 │   │   └── ...                     ├── event_log.py    ✅        ├── git_client.py ⏳
 │   ├── breakdown.json ⏳            ├── state_projection.py ✅      ├── tools/        ✅
 │   └── ...                       ├── agent_client.py ✅          │   ├── em.yaml   ✅
-                                ├── prompt_builder.py ✅          │   ├── engineer.yaml ✅
-                                ├── git_handler.py    ⏳          │   └── qa.yaml   ✅
-                                ├── output_validator.py ✅        ├── Dockerfile    ✅
-                                ├── performance_tracker.py ⏳     └── requirements.txt ✅
-                                ├── response_parser.py  ✅
-                                ├── task_manager.py     ✅
+                                 ├── git_handler.py    ⏳          │   ├── engineer.yaml ✅
+                                 ├── output_validator.py ✅        │   └── qa.yaml   ✅
+                              ├── performance_tracker.py ⏳     ├── Dockerfile    ✅
+                              ├── response_parser.py  ✅        └── requirements.txt ✅
+                                 ├── task_manager.py     ✅
                                 ├── events.py           ✅
                                 ├── interfaces.py       ✅
                                 ├── models.py           ✅
@@ -197,36 +196,29 @@ volumes:
 ### `speedster/config.py` - Configuration Models ✅
 
 ```python
-class ModelConfig(BaseModel):
-    """Model identifier in OpenCode format: provider/model_name"""
-    model: str  # e.g. "vllm/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q6_K"
-    variant: str | None = None  # e.g. "high", "max", "minimal"
-    context_window: int = 131072  # per-role context window limit
-
-class RoleConfig(BaseModel):
-    model: ModelConfig
-    system_prompt: str
-    tools: list[str] = ["read", "edit", "write", "bash", "grep", "glob", "webfetch"]
-    timeout_seconds: int = 600  # per-call timeout for multi-hour operations
-
-class AgentEndpoint(BaseModel):
-    role: str
-    url: str  # e.g., "http://em-agent:8080"
-    status: str = "unknown"  # "healthy", "unhealthy", "unknown"
+class ConnectivityConfig(BaseModel):
+    """Agent endpoint URLs."""
+    em_url: str
+    eng_url: str
+    qa_url: str
 
 class EventLogConfig(BaseModel):
     path: Path = Path("state/events.csv")
     snapshot_dir: Path = Path("state/snapshots")
     fsync_on_append: bool = True
 
-class AgentConfig(BaseModel):
-    roles: dict[str, RoleConfig] = {"em": ..., "engineer": ..., "qa": ...}
-    event_log: EventLogConfig = EventLogConfig()
-    max_qa_rounds: int = 20  # quality-first: no hard limit, but cap for safety
-    context_windows: dict[str, int] = {"em": 32768, "engineer": 131072, "qa": 32768}
+class StorageConfig(BaseModel):
+    event_log: EventLogConfig = Field(default_factory=EventLogConfig)
     task_dir: Path = Path("tasks")
-    # Performance tracking (no budget cap, just tracking)
+
+class AgentConfig(BaseModel):
+    connectivity: ConnectivityConfig
+    storage: StorageConfig
+    max_qa_rounds: int | None = None  # quality-first: no hard limit, but cap for safety
     track_performance: bool = True
+    repo_url: str | None = None
+    git_ssh_key: str | None = None
+    repo_default_branch: str | None = None
 ```
 
 ### `speedster/event_log.py` - CSV Event Log ✅
@@ -329,40 +321,9 @@ class GitHandler:
         ...
 ```
 
-### `speedster/prompt_builder.py` - Prompt Assembly ✅
+### Agent Prompt Assembly
 
-Orchestrator constructs each agent's prompt by:
-
-1. Loading relevant context from task files + replayed event state + git artifacts
-2. Embedding previous artifacts (e.g., EM plan, QA feedback)
-3. Respecting context window limits per role
-4. Chunking if content exceeds window
-
-```python
-class MessageBuilder:
-    def __init__(self, context_windows):
-        self.context_windows = context_windows  # {"em": 32768, "engineer": 131072, "qa": 32768}
-
-    def build_em_prompt(self, task: Task, codebase_context: str) -> str:
-        """EM receives: system prompt + task description + targeted codebase scan results"""
-        ...
-
-    def build_engineer_prompt(self, task: Task, context_files_content: dict[str, str]) -> str:
-        """Engineer receives: system prompt + task details + context files (chunked if needed)"""
-        ...
-
-    def build_qa_prompt(self, task: Task, diff: str, context_files_content: dict[str, str]) -> str:
-        """QA receives: system prompt + task details + acceptance criteria + diff + changed files only"""
-        ...
-
-    def build_feedback_prompt(self, task: Task, qa_feedback: str, diff: str) -> str:
-        """Engineer receives: system prompt + task details + acceptance criteria + previous diff + QA feedback"""
-        ...
-
-    def _chunked_prompt(self, base_prompt: str, content: dict[str, str], max_tokens: int) -> list[str]:
-        """Split content into chunks if it exceeds context window. Agent processes sequentially."""
-        ...
-```
+Each agent container builds its own prompts. The orchestrator sends structured payloads (task description, plan, QA feedback, etc.) via HTTP, and the agent's `server.py:_build_message()` constructs the user message. The agent's `acp_client.py` prepends the role's system prompt when invoking the model.
 
 ### `speedster/orchestrator.py` - Workflow Orchestrator (State Machine) ✅
 
@@ -669,7 +630,7 @@ Exit criteria:
 
 Goal: improve correctness at scale without unnecessary complexity.
 
-- [ ] `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly *(PromptBuilder exists but lacks context window enforcement and chunking)*
+- [ ] `speedster/message_builder.py` with role-specific context windows and bounded prompt assembly
 - [ ] Chunking/summarization protocol for overflow cases (with deterministic handoff format)
 - [ ] `speedster/performance_tracker.py` for per-role metrics (tokens, latency, QA rounds, approval rate)
 - [ ] Integration and regression tests for retry, resume, and QA feedback loops
@@ -771,7 +732,7 @@ Use these as release gates. An iteration is complete only when all checklist ite
 
 #### Build Checklist
 
-- [ ] Prompt builder applies role-specific context window limits *(PromptBuilder exists but context window enforcement not implemented)*
+- [ ] Message builder applies role-specific context window limits
 - [ ] Overflow strategy (chunk/summarize) uses deterministic handoff format
 - [ ] Performance tracker records per-role tokens/latency/approval metrics *(module missing)*
 - [x] Retry and QA feedback loop tests cover failure and success paths *(tests pass)*

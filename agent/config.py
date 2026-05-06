@@ -11,7 +11,7 @@ class AgentConfig:
     """Configuration for an agent container."""
 
     role: str = field(default_factory=lambda: os.getenv("ROLE", "em"))
-    model: str = field(default_factory=lambda: os.getenv("MODEL", "vllm/default"))
+    model: str = ""
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8080")))
     tools_config: str = field(
@@ -30,6 +30,11 @@ class AgentConfig:
         default_factory=lambda: os.getenv("MOCK_MODE", "1") == "1"
     )
 
+    def __post_init__(self):
+        if not self.model:
+            role_env = f"{self.role.upper()}_MODEL"
+            self.model = os.getenv(role_env, "")
+
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}"
@@ -44,4 +49,6 @@ class AgentConfig:
             )
 
         if not self.model:
-            raise ValueError("MODEL environment variable is required")
+            raise ValueError(
+                f"Model environment variable {self.role.upper()}_MODEL is required"
+            )

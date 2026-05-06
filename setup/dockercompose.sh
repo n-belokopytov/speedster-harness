@@ -89,9 +89,44 @@ phase_dockercompose() {
         fi
     done
 
-    # Write URLs to .env file
+    # --- Prompt for agent models ---
+    local em_model eng_model qa_model
+
+    # Read existing models from .env if available
+    local existing_em_model="" existing_eng_model="" existing_qa_model=""
+    if [[ -f "$env_file" ]]; then
+        existing_em_model="$(grep -E '^EM_MODEL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "")"
+        existing_eng_model="$(grep -E '^ENGINEER_MODEL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "")"
+        existing_qa_model="$(grep -E '^QA_MODEL=' "$env_file" 2>/dev/null | cut -d= -f2- || echo "")"
+    fi
+
+    echo ""
+    info "Agent model configuration"
+
+    local em_default="${existing_em_model:-}"
+    info "EM model [${em_default}]:"
+    read -r em_input
+    em_model="${em_input:-$em_default}"
+
+    local eng_default="${existing_eng_model:-}"
+    info "Engineer model [${eng_default}]:"
+    read -r eng_input
+    eng_model="${eng_input:-$eng_default}"
+
+    local qa_default="${existing_qa_model:-}"
+    info "QA model [${qa_default}]:"
+    read -r qa_input
+    qa_model="${qa_input:-$qa_default}"
+
+    # Validate models are not empty
+    if [[ -z "$em_model" || -z "$eng_model" || -z "$qa_model" ]]; then
+        fail "All agent models are required (EM_MODEL, ENGINEER_MODEL, QA_MODEL)"
+        return 1
+    fi
+
+    # Write URLs and models to .env file
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        cmd "Writing agent URLs to .env"
+        cmd "Writing agent URLs and models to .env"
     else
         _update_env_var() {
             local key="$1" value="$2"
@@ -105,6 +140,9 @@ phase_dockercompose() {
         _update_env_var "EM_AGENT_URL" "$em_url"
         _update_env_var "ENG_AGENT_URL" "$eng_url"
         _update_env_var "QA_AGENT_URL" "$qa_url"
+        _update_env_var "EM_MODEL" "$em_model"
+        _update_env_var "ENGINEER_MODEL" "$eng_model"
+        _update_env_var "QA_MODEL" "$qa_model"
 
         # Extract ports from URLs
         local em_port eng_port qa_port
@@ -138,6 +176,11 @@ phase_dockercompose() {
         echo "    EM:        ${em_url}"
         echo "    Engineer:  ${eng_url}"
         echo "    QA:        ${qa_url}"
+        echo "  "
+        echo "  Agent models:"
+        echo "    EM:        ${em_model}"
+        echo "    Engineer:  ${eng_model}"
+        echo "    QA:        ${qa_model}"
         echo "  "
         info "View logs with: docker compose logs -f"
     else

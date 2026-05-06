@@ -15,7 +15,7 @@ Each role has a distinct purpose, prompt, output schema, and model class. The or
 | **Validator CLI** | `speedster/cli/validate_em_breakdown.py` |
 | **Normalizer CLI** | `speedster/cli/normalize_em_breakdown.py` |
 | **Model class** | Mid-size (25B range) |
-| **Timeout** | 600s (configurable via `RoleConfig.timeout_seconds`) |
+| **Timeout** | 600s |
 
 **Purpose:** Decompose a task description into a structured breakdown with acceptance criteria, subtasks, dependency graph, and context file list.
 
@@ -38,7 +38,7 @@ Each role has a distinct purpose, prompt, output schema, and model class. The or
 | **Output validator** | `speedster/cli/validate_engineer_output.py` |
 | **Contract library** | `speedster/contracts/engineer_contract.py` |
 | **Model class** | Mid-size to large (25B-70B range) |
-| **Timeout** | 600s (configurable via `RoleConfig.timeout_seconds`) |
+| **Timeout** | 600s |
 
 **Purpose:** Implement the task per the EM breakdown, push code to a dedicated branch, and return structured output with evidence.
 
@@ -62,7 +62,7 @@ Each role has a distinct purpose, prompt, output schema, and model class. The or
 | **Output validator** | `speedster/cli/validate_qa_output.py` |
 | **Contract library** | `speedster/contracts/qa_contract.py` |
 | **Model class** | Mid-size (25B range) |
-| **Timeout** | 600s (configurable via `RoleConfig.timeout_seconds`) |
+| **Timeout** | 600s |
 
 **Purpose:** Review engineer output against acceptance criteria and either approve or reject with actionable feedback.
 
@@ -91,20 +91,13 @@ Changes to system prompts require:
 
 ### Model Configuration
 
-Models are configured per role in `speedster/config.py` via `RoleConfig.model.model`. The harness supports per-role model overrides via `RunConfig.model_overrides`.
+Models are configured via environment variables per role. Each agent reads its model from the corresponding env var:
 
-```python
-# Example: Override models for a run
-run = RunConfig(
-    repo_url="https://github.com/example/repo.git",
-    task_id="task-001",
-    model_overrides={
-        "em": "vllm/Qwen3.6-35B",
-        "engineer": "vllm/Qwen3.6-70B",
-        "qa": "vllm/Qwen3.6-35B",
-    },
-)
-```
+- **EM agent:** `EM_MODEL`
+- **Engineer agent:** `ENGINEER_MODEL`
+- **QA agent:** `QA_MODEL`
+
+If a role's model env var is empty, `AgentConfig.validate()` raises a `ValueError` and the agent fails to start.
 
 ## Workflow Contract
 
@@ -120,7 +113,7 @@ TaskCreated -> PlanningCompleted -> ImplementationCompleted -> ReviewPassed -> T
 - **QA rejection:** Engineer is re-dispatched with prior QA feedback appended to the prompt
 - **Max QA rounds:** Configurable via `max_qa_rounds` in `AgentConfig`. Default is `None` (unlimited). Set to 20 for production guardrails.
 - **Validation failure:** Agent is retried once with the validation error appended to the prompt
-- **Timeout:** Agent subprocess is killed after `timeout_seconds` (default 600s). Task moves to `TaskFailed`.
+- **Timeout:** Agent subprocess is killed after 600s. Task moves to `TaskFailed`.
 
 ### Git Workflow (Iteration 3)
 
@@ -136,13 +129,13 @@ TaskCreated -> PlanningCompleted -> ImplementationCompleted -> ReviewPassed -> T
 
 ```bash
 # Start EM agent
-ROLE=em MODEL="vllm/Qwen3.6-35B" PORT=8081 python agent/main.py
+ROLE=em EM_MODEL="vllm/Qwen3.6-35B" PORT=8081 python agent/main.py
 
 # Start Engineer agent
-ROLE=engineer MODEL="vllm/Qwen3.6-70B" PORT=8082 python agent/main.py
+ROLE=engineer ENGINEER_MODEL="vllm/Qwen3.6-70B" PORT=8082 python agent/main.py
 
 # Start QA agent
-ROLE=qa MODEL="vllm/Qwen3.6-35B" PORT=8083 python agent/main.py
+ROLE=qa QA_MODEL="vllm/Qwen3.6-35B" PORT=8083 python agent/main.py
 ```
 
 ### Running the Orchestrator

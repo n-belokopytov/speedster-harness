@@ -59,8 +59,7 @@ def _create_git_handler(config: AgentConfig) -> GitHandler | None:
 
 
 def _load_config() -> AgentConfig:
-    prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
-    return default_config(prompts_dir=prompts_dir)
+    return default_config()
 
 
 @app.command()

@@ -21,9 +21,6 @@ from speedster.config import (
     AgentConfig,
     ConnectivityConfig,
     EventLogConfig,
-    ModelConfig,
-    RolesConfig,
-    RoleConfig,
     StorageConfig,
 )
 from speedster.orchestrator import Orchestrator
@@ -251,7 +248,10 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['em']}/work",
-                json={"message": "Produce a plan for task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Produce a plan for task-e2e",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -265,7 +265,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['engineer']}/work",
-                json={"message": "Implement task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Implement task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -278,7 +282,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['qa']}/work",
-                json={"message": "Review task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Review task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -305,22 +313,6 @@ class TestE2EHTTP:
         )
 
         config = AgentConfig(
-            roles=RolesConfig(
-                roles={
-                    "em": RoleConfig(
-                        model=ModelConfig(model="vllm/em-e2e"),
-                        system_prompt="EM system prompt",
-                    ),
-                    "engineer": RoleConfig(
-                        model=ModelConfig(model="vllm/engineer-e2e"),
-                        system_prompt="Engineer system prompt",
-                    ),
-                    "qa": RoleConfig(
-                        model=ModelConfig(model="vllm/qa-e2e"),
-                        system_prompt="QA system prompt",
-                    ),
-                }
-            ),
             connectivity=ConnectivityConfig(
                 em_url=agent_servers["em"],
                 eng_url=agent_servers["engineer"],
@@ -377,22 +369,6 @@ class TestE2EHTTP:
         )
 
         config = AgentConfig(
-            roles=RolesConfig(
-                roles={
-                    "em": RoleConfig(
-                        model=ModelConfig(model="vllm/em-e2e"),
-                        system_prompt="EM system prompt",
-                    ),
-                    "engineer": RoleConfig(
-                        model=ModelConfig(model="vllm/engineer-e2e"),
-                        system_prompt="Engineer system prompt",
-                    ),
-                    "qa": RoleConfig(
-                        model=ModelConfig(model="vllm/qa-e2e"),
-                        system_prompt="QA system prompt",
-                    ),
-                }
-            ),
             connectivity=ConnectivityConfig(
                 em_url=agent_servers["em"],
                 eng_url=agent_servers["engineer"],
@@ -466,26 +442,10 @@ class TestE2ERealModel:
         )
 
         config = AgentConfig(
-            roles=RolesConfig(
-                roles={
-                    "em": RoleConfig(
-                        model=ModelConfig(model="vllm/em-e2e"),
-                        system_prompt="EM system prompt",
-                    ),
-                    "engineer": RoleConfig(
-                        model=ModelConfig(model="vllm/engineer-e2e"),
-                        system_prompt="Engineer system prompt",
-                    ),
-                    "qa": RoleConfig(
-                        model=ModelConfig(model="vllm/qa-e2e"),
-                        system_prompt="QA system prompt",
-                    ),
-                }
-            ),
             connectivity=ConnectivityConfig(
-                em_url=real_agent_servers["em"],
-                eng_url=real_agent_servers["engineer"],
-                qa_url=real_agent_servers["qa"],
+                em_url=agent_servers["em"],
+                eng_url=agent_servers["engineer"],
+                qa_url=agent_servers["qa"],
             ),
             storage=StorageConfig(
                 event_log=EventLogConfig(path=event_log_path),
@@ -525,25 +485,9 @@ class TestE2ERealModel:
                     "priority": "high",
                     "status": "pending",
                 })
-            )
+      )
 
             config = AgentConfig(
-                roles=RolesConfig(
-                    roles={
-                        "em": RoleConfig(
-                            model=ModelConfig(model="vllm/em-e2e"),
-                            system_prompt="EM system prompt",
-                        ),
-                        "engineer": RoleConfig(
-                            model=ModelConfig(model="vllm/engineer-e2e"),
-                            system_prompt="Engineer system prompt",
-                        ),
-                        "qa": RoleConfig(
-                            model=ModelConfig(model="vllm/qa-e2e"),
-                            system_prompt="QA system prompt",
-                        ),
-                    }
-                ),
                 connectivity=ConnectivityConfig(
                     em_url=real_agent_servers["em"],
                     eng_url=real_agent_servers["engineer"],

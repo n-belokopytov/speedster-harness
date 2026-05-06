@@ -5,10 +5,9 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: em
-        MODEL: ${MODEL:-vllm/default}
     environment:
       ROLE: em
-      MODEL: ${MODEL:-vllm/default}
+      EM_MODEL: ${EM_MODEL}
       HOST: 0.0.0.0
       PORT: 8080
       TOOLS_CONFIG: /app/agent/tools/em.yaml
@@ -32,10 +31,9 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: engineer
-        MODEL: ${MODEL:-vllm/default}
     environment:
       ROLE: engineer
-      MODEL: ${MODEL:-vllm/default}
+      ENGINEER_MODEL: ${ENGINEER_MODEL}
       HOST: 0.0.0.0
       PORT: 8080
       TOOLS_CONFIG: /app/agent/tools/engineer.yaml
@@ -62,10 +60,9 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: qa
-        MODEL: ${MODEL:-vllm/default}
     environment:
       ROLE: qa
-      MODEL: ${MODEL:-vllm/default}
+      QA_MODEL: ${QA_MODEL}
       HOST: 0.0.0.0
       PORT: 8080
       TOOLS_CONFIG: /app/agent/tools/qa.yaml

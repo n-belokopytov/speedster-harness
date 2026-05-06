@@ -1,10 +1,8 @@
 FROM python:3.12-slim
 
 ARG ROLE=em
-ARG MODEL=vllm/default
 
 ENV ROLE=${ROLE}
-ENV MODEL=${MODEL}
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app

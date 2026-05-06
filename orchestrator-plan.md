@@ -86,7 +86,6 @@ The orchestrator must not silently implement one while the other is assumed by t
 [PLAN.md](PLAN.md) has a few items worth overriding or clarifying in code/docs:
 
 - **`plan.json` vs `breakdown.json`:** File tree should align with `breakdown.json` + `schemas/em_breakdown.schema.json`.
-- **`ModelConfig.context_window` vs `AgentConfig.context_windows`:** Pick a single source of truth for `MessageBuilder` (e.g. only `context_windows` for orchestration).
 - **OutputValidator** section mentions outputs only; Iteration 1 also expects **engineer input** validation — include in the validator design.
 - **Terminal conflict state** (merge failure): plan mentions `conflict` status; ensure event log / projection can represent it when Git integration ships.
 

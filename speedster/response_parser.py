@@ -18,7 +18,7 @@ class ResponseParser:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def parse_qa(self, response: AgentResponse, model_name: str) -> StepResult:
+    def parse_qa(self, response: AgentResponse) -> StepResult:
         qa_output = self.parse_json(response.output)
         if not isinstance(qa_output, dict):
             qa_output = {}
@@ -36,7 +36,7 @@ class ResponseParser:
 
         return StepResult(
             role="qa",
-            model=model_name,
+            model=response.model,
             output=response.output,
             tokens_used=response.tokens_used,
             latency_ms=response.latency_ms,
