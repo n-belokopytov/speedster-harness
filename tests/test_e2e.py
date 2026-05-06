@@ -251,7 +251,10 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['em']}/work",
-                json={"message": "Produce a plan for task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Produce a plan for task-e2e",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -265,7 +268,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['engineer']}/work",
-                json={"message": "Implement task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Implement task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -278,7 +285,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['qa']}/work",
-                json={"message": "Review task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Review task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()

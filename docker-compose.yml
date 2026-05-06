@@ -82,3 +82,29 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: speedster/Dockerfile
+    environment:
+      EM_AGENT_URL: http://em-agent:8080
+      ENG_AGENT_URL: http://engineer-agent:8080
+      QA_AGENT_URL: http://qa-agent:8080
+      REPO_URL: ${REPO_URL:-}
+      GIT_SSH_KEY: /run/secrets/github_ssh_key
+      REPO_DEFAULT_BRANCH: ${REPO_DEFAULT_BRANCH:-main}
+      MAX_QA_ROUNDS: ${MAX_QA_ROUNDS:-}
+    volumes:
+      - ./:/workspace
+      - ./state:/app/state
+      - ${SSH_KEY_PATH:-~/.ssh/id_speedster}:/run/secrets/github_ssh_key:ro
+    working_dir: /workspace
+    depends_on:
+      em-agent:
+        condition: service_healthy
+      engineer-agent:
+        condition: service_healthy
+      qa-agent:
+        condition: service_healthy
+    restart: unless-stopped

@@ -28,7 +28,13 @@ logger = logging.getLogger(__name__)
 class WorkRequest(BaseModel):
     """Request body for /work endpoint."""
 
-    message: str
+    task_id: str
+    description: str
+    priority: str = "medium"
+    plan: str | None = None
+    round_num: int = 1
+    qa_feedback: list[str] | None = None
+    requested_context: list[str] | None = None
     session_id: str | None = None
 
 
@@ -37,6 +43,7 @@ class WorkResponse(BaseModel):
 
     session_id: str
     output: str
+    model: str
     tokens_used: int = 0
     latency_ms: int = 0
 
@@ -101,7 +108,7 @@ class AgentServer:
                 model=config.model,
                 system_prompt_path=system_prompt_path,
                 workspace_root=repo_path or Path(config.repo_root),
-           git_ssh_key=config.git_ssh_key,
+               git_ssh_key=config.git_ssh_key,
             )
 
             self._register_routes()
@@ -121,7 +128,7 @@ class AgentServer:
         """Handle a /work request.
 
         Args:
-            request: The work request with message and optional session_id
+            request: The structured work request
 
         Returns:
             WorkResponse with output and metadata
@@ -143,11 +150,11 @@ class AgentServer:
             self._sessions[session_id] = session
 
         session.last_activity = start_time
-        session.messages.append({"role": "user", "content": request.message})
+        message = self._build_message(request)
+        session.messages.append({"role": "user", "content": message})
 
         try:
-            # Process through OpenCode ACP (or mock for now)
-            output = await self._process_message(session, request.message)
+            output = await self._process_message(session, message)
             latency_ms = int((time.time() - start_time) * 1000)
 
             if session._last_tokens > 0:
@@ -158,6 +165,7 @@ class AgentServer:
             return WorkResponse(
                 session_id=session_id,
                 output=output,
+                model=self.config.model,
                 tokens_used=tokens_used,
                 latency_ms=latency_ms,
             )
@@ -165,6 +173,55 @@ class AgentServer:
         except Exception as exc:
             logger.error("Work processing failed: %s", exc)
             raise HTTPException(status_code=500, detail=str(exc))
+
+    def _build_message(self, request: WorkRequest) -> str:
+        """Build the user message from structured request data.
+
+        Args:
+            request: The structured work request
+
+        Returns:
+            Formatted message string
+        """
+
+        role = self.config.role
+        lines = [
+            "## Task",
+            f"ID: {request.task_id}",
+            f"Description: {request.description}",
+            f"Priority: {request.priority}",
+            "",
+        ]
+
+        if role == "em":
+            if request.requested_context:
+                lines.append("## Context Requested by Engineer")
+                lines.append(json.dumps(request.requested_context, indent=2))
+                lines.append("")
+            lines.append("Please produce a breakdown.json with implementation plan.")
+
+        elif role == "engineer":
+            if request.plan:
+                lines.append("## Plan")
+                lines.append(request.plan)
+                lines.append("")
+            if request.round_num > 1 and request.qa_feedback:
+                lines.append("## QA Feedback from Previous Round")
+                for item in request.qa_feedback:
+                    lines.append(f"- {item}")
+                lines.append("")
+                lines.append("Please address the above feedback.")
+            else:
+                lines.append("Please implement the task per the plan.")
+
+        elif role == "qa":
+            if request.plan:
+                lines.append(f"## Engineer Output (Round {request.round_num})")
+                lines.append(request.plan)
+                lines.append("")
+            lines.append("Please review and produce a QA review with findings.")
+
+        return "\n".join(lines)
 
     async def _process_message(
         self, session: Session, message: str

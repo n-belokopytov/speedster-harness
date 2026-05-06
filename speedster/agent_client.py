@@ -18,6 +18,7 @@ class AgentResponse:
 
     session_id: str
     output: str
+    model: str = ""
     tokens_used: int = 0
     latency_ms: int = 0
     error: str | None = None

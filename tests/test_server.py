@@ -132,7 +132,10 @@ class TestProcessMessageNonMock:
     ) -> None:
         """WorkResponse carries tokens_used and latency_ms from ACPClient."""
 
-        request = WorkRequest(message="test message")
+        request = WorkRequest(
+            task_id="test-001",
+            description="Test message",
+        )
 
         import asyncio
 
@@ -196,7 +199,10 @@ class TestHTTP500ErrorPropagation:
 
         import asyncio
 
-        request = WorkRequest(message="test message")
+        request = WorkRequest(
+            task_id="test-001",
+            description="Test message",
+        )
 
         with pytest.raises(Exception) as exc_info:
             asyncio.run(server.handle_work(request))

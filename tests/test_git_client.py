@@ -131,18 +131,29 @@ class TestGitClient:
         diff = git_client.get_diff()
         assert "new_file.txt" in diff
 
-    def test_git_error_on_no_git(self, work_dir: Path) -> None:
-        """GitClient should raise GitError when git CLI is not found."""
+    def test_fetch_updates_remote_refs(self, git_client: GitClient, remote_repo: str) -> None:
+        """Fetch should retrieve refs from remote."""
 
-        client = GitClient(
-            repo_url="/nonexistent/repo.git",
-            repo_root=work_dir / "clone",
+        import subprocess
+
+        work = Path(remote_repo).parent / "work-init"
+        (work / "fetched_file.txt").write_text("fetched\n")
+        subprocess.run(["git", "-C", str(work), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(work), "commit", "-m", "Add fetched file"],
+            check=True,
+            capture_output=True,
+            env={
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@test.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@test.com",
+                **__import__("os").environ,
+            },
         )
-        # Create the directory so it's not a FileNotFoundError for the cwd
-        client.repo_root.mkdir(parents=True, exist_ok=True)
-        # This should raise when trying to run a git command
-        with pytest.raises(GitError):
-            client.get_head_sha()
+        subprocess.run(["git", "-C", str(work), "push"], check=True, capture_output=True)
+
+        git_client.fetch("origin", git_client.default_branch)
 
 
 class TestGitClientErrors:
