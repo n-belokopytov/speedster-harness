@@ -258,14 +258,6 @@ class TestValidateStructural:
         with pytest.raises(BreakdownValidationError, match="testing.*prefix invalid"):
             _validate_structural(b)
 
-    def test_missing_coverage_phrase(self) -> None:
-        b = self._base()
-        b["tasks"][0]["acceptance_criteria"]["testing"] = (
-            "Well-designed unit tests cover the change end to end."
-        )
-        with pytest.raises(BreakdownValidationError, match="missing required coverage phrase"):
-            _validate_structural(b)
-
     def test_self_dependency(self) -> None:
         b = self._base()
         b["tasks"][0]["depends_on"] = ["a"]

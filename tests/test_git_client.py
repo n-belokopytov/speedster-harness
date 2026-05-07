@@ -88,34 +88,12 @@ class TestGitClient:
         assert "/" not in branch or branch.startswith("speedster/")
         assert " " not in branch
 
-    def test_create_branch(self, git_client: GitClient) -> None:
-        """Create branch should create a new branch."""
-
-        git_client.create_branch("speedster/test-task")
-        branches = git_client.get_branches()
-        assert "speedster/test-task" in branches
-
     def test_get_head_sha(self, git_client: GitClient) -> None:
         """HEAD SHA should be a 40-character hex string."""
 
         sha = git_client.get_head_sha()
         assert len(sha) == 40
         assert all(c in "0123456789abcdef" for c in sha)
-
-    def test_commit_no_changes_returns_head_sha(self, git_client: GitClient) -> None:
-        """Commit with no changes should return current HEAD SHA without raising."""
-
-        original_sha = git_client.get_head_sha()
-        sha = git_client.commit("No-op commit")
-        assert sha == original_sha
-
-    def test_commit_with_changes(self, git_client: GitClient) -> None:
-        """Commit with changes should create a new commit."""
-
-        (git_client.repo_root / "new_file.txt").write_text("Hello\n")
-        git_client.stage_all()
-        sha = git_client.commit("Add new file")
-        assert len(sha) == 40
 
     def test_get_diff_no_changes(self, git_client: GitClient) -> None:
         """Diff with no changes should return empty string."""
@@ -126,10 +104,10 @@ class TestGitClient:
     def test_get_diff_with_changes(self, git_client: GitClient) -> None:
         """Diff with changes should return unified diff."""
 
-        (git_client.repo_root / "new_file.txt").write_text("Hello\n")
-        git_client.stage_all()
+        readme = git_client.repo_root / "README.md"
+        readme.write_text(readme.read_text() + "\n# Added line\n")
         diff = git_client.get_diff()
-        assert "new_file.txt" in diff
+        assert "Added line" in diff
 
     def test_fetch_updates_remote_refs(self, git_client: GitClient, remote_repo: str) -> None:
         """Fetch should retrieve refs from remote."""

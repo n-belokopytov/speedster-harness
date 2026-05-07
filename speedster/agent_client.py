@@ -18,19 +18,9 @@ class AgentResponse:
 
     session_id: str
     output: str
-    model: str = ""
     tokens_used: int = 0
     latency_ms: int = 0
     error: str | None = None
-
-
-@dataclass
-class HealthResponse:
-    """Structured response from an agent /health call."""
-
-    status: str
-    model: str = ""
-    gpu_mem: str = ""
 
 
 class AgentClient:
@@ -110,7 +100,6 @@ class AgentClient:
                 return AgentResponse(
                     session_id=data.get("session_id", session_id or ""),
                     output=data.get("output", ""),
-                    model=data.get("model", ""),
                     tokens_used=data.get("tokens_used", 0),
                     latency_ms=data.get("latency_ms", 0),
                 )
@@ -133,35 +122,6 @@ class AgentClient:
         raise httpx.HTTPError(
             f"Agent work failed after {self.max_retries} attempts"
         )
-
-    async def health(self, url: str) -> HealthResponse:
-        """Check agent health via /health endpoint.
-
-        Args:
-            url: Agent base URL
-
-        Returns:
-            HealthResponse with status and metadata
-        """
-
-        client = await self._get_client()
-        try:
-            response = await client.get(
-                f"{url}/health",
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            return HealthResponse(
-                status=data.get("status", "unknown"),
-                model=data.get("model", ""),
-                gpu_mem=data.get("gpu_mem", ""),
-            )
-
-        except httpx.HTTPError as exc:
-            logger.error("Health check failed for %s: %s", url, exc)
-            return HealthResponse(status="unhealthy")
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

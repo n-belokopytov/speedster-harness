@@ -220,7 +220,6 @@ def task(tmp_path: Path) -> Task:
         description="Add user authentication with JWT",
         priority="high",
         status="pending",
-        context_dir=task_dir / "context",
     )
 
 

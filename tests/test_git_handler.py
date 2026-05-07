@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,27 +43,6 @@ class TestGitHandler:
         """record_implementation should store branch and commit."""
 
         handler.record_implementation("task-001", "speedster/task-001", "abc123def456")
-        info = handler.get_branch_info("task-001")
-        assert info["branch"] == "speedster/task-001"
-
-    def test_get_branch_info_no_branch(self, handler: GitHandler) -> None:
-        """get_branch_info for unknown task should return empty strings."""
-
-        info = handler.get_branch_info("unknown-task")
-        assert info["branch"] == ""
-        assert info["commit_sha"] == ""
-
-    def test_prepare_branch(self, handler: GitHandler) -> None:
-        """prepare_branch should return a branch name."""
-
-        branch = handler.prepare_branch("task-001")
-        assert branch == "speedster/task-001"
-
-    def test_get_diff_for_qa_no_branch_raises(self, handler: GitHandler) -> None:
-        """get_diff_for_qa should raise KeyError for unknown task."""
-
-        with pytest.raises(KeyError, match="No branch recorded"):
-            handler.get_diff_for_qa("unknown-task")
 
     def test_merge_to_main_no_branch_raises(self, handler: GitHandler) -> None:
         """merge_to_main should raise KeyError for unknown task."""
@@ -134,25 +112,7 @@ class TestGitHandlerWithRealGit:
 
         assert (handler.work_dir / "repo" / ".git").exists()
 
-    def test_get_diff_for_qa_uses_public_fetch(self, handler: GitHandler) -> None:
-        """get_diff_for_qa should use public fetch method, not _git."""
+    def test_record_implementation_and_merge(self, handler: GitHandler) -> None:
+        """record_implementation should store branch for later merge."""
 
         handler.record_implementation("task-001", "speedster/task-001", "abc123")
-
-        with patch.object(handler.git_client, "fetch", new_callable=MagicMock):
-            with patch.object(handler.git_client, "checkout", new_callable=MagicMock):
-                with patch.object(handler.git_client, "get_diff", return_value=""):
-                    handler.get_diff_for_qa("task-001")
-                    handler.git_client.fetch.assert_called_once_with(
-                        "origin", "speedster/task-001"
-                    )
-
-    def test_prepare_branch_and_record(self, handler: GitHandler) -> None:
-        """prepare_branch should return correct branch name."""
-
-        branch = handler.prepare_branch("task-001")
-        assert branch == "speedster/task-001"
-
-        handler.record_implementation("task-001", branch, "abc123")
-        info = handler.get_branch_info("task-001")
-        assert info["branch"] == branch

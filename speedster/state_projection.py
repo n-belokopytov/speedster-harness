@@ -104,20 +104,10 @@ class StateProjection:
         self._projections = projections
         return projections
 
-    def invalidate(self) -> None:
-        """Invalidate the cached projections to force a rebuild."""
-
-        self._projections = None
-
     def get_non_terminal(self) -> list[TaskProjection]:
         """Return projections for tasks that are not yet in a terminal state."""
 
         return [p for p in self.rebuild().values() if not p.is_terminal]
-
-    def get_terminal(self) -> list[TaskProjection]:
-        """Return projections for tasks that have reached a terminal state."""
-
-        return [p for p in self.rebuild().values() if p.is_terminal]
 
     def get_task(self, task_id: str) -> TaskProjection | None:
         """Return the projection for a specific task."""

@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +24,9 @@ class EventLog:
         self,
         path: Path,
         fsync_on_append: bool = True,
-        on_event: Callable[[dict], None] | None = None,
     ):
         self.path = path
         self.fsync = fsync_on_append
-        self._on_event = on_event
         self._last_seq: int = 0
         self._ensure_file()
         self._load_last_seq()
@@ -110,9 +108,6 @@ class EventLog:
             event["model"],
         )
 
-        if self._on_event:
-            self._on_event(event)
-
         return event
 
     def replay(self) -> Iterator[dict]:
@@ -134,9 +129,3 @@ class EventLog:
         """Return all events for a specific task, ordered by seq."""
 
         return [e for e in self.replay() if e.get("task_id") == task_id]
-
-    def get_latest_event_for_task(self, task_id: str) -> dict | None:
-        """Return the most recent event for a specific task."""
-
-        events = self.get_events_for_task(task_id)
-        return events[-1] if events else None
