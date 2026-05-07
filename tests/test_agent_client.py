@@ -28,13 +28,12 @@ class TestAgentClientWork:
     """Test the /work endpoint client logic."""
 
     async def test_work_returns_all_fields(self) -> None:
-        """All server response fields including model are propagated."""
+        """All server response fields are propagated correctly."""
 
         client = AgentClient()
         mock_resp = _mock_response({
             "session_id": "sess-123",
             "output": '{"status": "implemented"}',
-            "model": "vllm/test-model",
             "tokens_used": 500,
             "latency_ms": 1200,
         })
@@ -47,7 +46,6 @@ class TestAgentClientWork:
 
         assert result.session_id == "sess-123"
         assert '{"status": "implemented"}' in result.output
-        assert result.model == "vllm/test-model"
         assert result.tokens_used == 500
         assert result.latency_ms == 1200
         assert result.error is None
@@ -69,7 +67,6 @@ class TestAgentClientWork:
 
         assert result.session_id == "sess-456"
         assert result.output == "partial response"
-        assert result.model == ""
         assert result.tokens_used == 0
         assert result.latency_ms == 0
 
@@ -157,7 +154,6 @@ class TestAgentClientHealth:
         client = AgentClient()
         mock_resp = _mock_response({
             "status": "healthy",
-            "model": "vllm/test",
             "gpu_mem": "45%",
         })
         with patch.object(client, "_get_client") as mock_get:
@@ -165,7 +161,6 @@ class TestAgentClientHealth:
             result = await client.health("http://agent:8080")
 
         assert result.status == "healthy"
-        assert result.model == "vllm/test"
         assert result.gpu_mem == "45%"
 
     async def test_health_returns_unhealthy_on_error(self) -> None:
