@@ -110,6 +110,7 @@ class AgentClient:
                 return AgentResponse(
                     session_id=data.get("session_id", session_id or ""),
                     output=data.get("output", ""),
+                    model=data.get("model", ""),
                     tokens_used=data.get("tokens_used", 0),
                     latency_ms=data.get("latency_ms", 0),
                 )
