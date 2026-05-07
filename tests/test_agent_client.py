@@ -145,37 +145,6 @@ class TestAgentClientWork:
                 )
 
 
-class TestAgentClientHealth:
-    """Test the /health endpoint client logic."""
-
-    async def test_health_returns_healthy(self) -> None:
-        """Successful health check returns HealthResponse with status."""
-
-        client = AgentClient()
-        mock_resp = _mock_response({
-            "status": "healthy",
-            "gpu_mem": "45%",
-        })
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(get=AsyncMock(return_value=mock_resp))
-            result = await client.health("http://agent:8080")
-
-        assert result.status == "healthy"
-        assert result.gpu_mem == "45%"
-
-    async def test_health_returns_unhealthy_on_error(self) -> None:
-        """HTTP error during health check returns unhealthy status."""
-
-        client = AgentClient()
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(
-                get=AsyncMock(side_effect=httpx.ConnectError("connection refused"))
-            )
-            result = await client.health("http://agent:8080")
-
-        assert result.status == "unhealthy"
-
-
 class TestAgentClientLifecycle:
     """Test AgentClient initialization and context manager."""
 

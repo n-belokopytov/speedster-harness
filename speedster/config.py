@@ -12,7 +12,6 @@ class ModelConfig(BaseModel):
     """Model identifier in OpenCode format: provider/model_name"""
 
     model: str  # e.g. "vllm/unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q6_K"
-    variant: str | None = None  # e.g. "high", "max", "minimal"
 
 
 class RoleConfig(BaseModel):
@@ -20,24 +19,6 @@ class RoleConfig(BaseModel):
 
     model: ModelConfig
     system_prompt: str
-    tools: list[str] = [
-        "read",
-        "edit",
-        "write",
-        "bash",
-        "grep",
-        "glob",
-        "webfetch",
-    ]
-    timeout_seconds: int = 600
-
-
-class AgentEndpoint(BaseModel):
-    """Network endpoint for a remote agent container."""
-
-    role: str
-    url: str  # e.g. "http://em-agent:8080"
-    status: str = "unknown"  # "healthy", "unhealthy", "unknown"
 
 
 class RolesConfig(BaseModel):
@@ -77,8 +58,6 @@ class EventLogConfig(BaseModel):
     """Configuration for the durable CSV event log."""
 
     path: Path = Path("state/events.csv")
-    snapshot_dir: Path = Path("state/snapshots")
-    fsync_on_append: bool = True
 
 
 class AgentConfig(BaseModel):
@@ -88,12 +67,6 @@ class AgentConfig(BaseModel):
     connectivity: ConnectivityConfig = Field(default_factory=ConnectivityConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     max_qa_rounds: int | None = None  # None = unlimited; int = circuit breaker
-    context_windows: dict[str, int] = {
-        "em": 32768,
-        "engineer": 131072,
-        "qa": 32768,
-    }
-    track_performance: bool = True
     repo_url: str | None = Field(
         default_factory=lambda: os.getenv("REPO_URL", "") or None
     )
@@ -123,16 +96,6 @@ class AgentConfig(BaseModel):
     @property
     def qa_url(self) -> str:
         return self.connectivity.qa_url
-
-
-class RunConfig(BaseModel):
-    """Harness-supplied run parameters."""
-
-    repo_url: str
-    repo_default_branch: str = "main"
-    task_id: str
-    model_overrides: dict[str, str] = Field(default_factory=dict)
-    config: AgentConfig | None = None
 
 
 def load_role_prompt(prompt_path: Path) -> str:

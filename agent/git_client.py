@@ -131,52 +131,6 @@ class GitClient:
 
         self._git("fetch", remote, ref)
 
-    def create_branch(self, branch_name: str) -> None:
-        """Create and checkout a new branch from the default branch.
-
-        Args:
-            branch_name: Name of the branch to create.
-
-        Raises:
-            GitError: If branch creation fails.
-        """
-
-        self.fetch("origin", self.default_branch)
-        self._git("checkout", "-B", branch_name, f"origin/{self.default_branch}")
-        logger.info("Created branch %s from origin/%s", branch_name, self.default_branch)
-
-    def stage_all(self) -> None:
-        """Stage all changes in the working directory.
-
-        Raises:
-            GitError: If staging fails.
-        """
-
-        self._git("add", "-A")
-
-    def commit(self, message: str) -> str:
-        """Commit staged changes with the given message.
-
-        Args:
-            message: Commit message.
-
-        Returns:
-            Full SHA of the new commit.
-
-        Raises:
-            GitError: If commit fails.
-        """
-
-        status_result = self._git("status", "--porcelain")
-        if not status_result.stdout.strip():
-            logger.info("No changes to commit")
-            return self.get_head_sha()
-
-        self._git("commit", "-m", message)
-        sha = self.get_head_sha()
-        logger.info("Committed: %s (%s)", sha[:7], message)
-        return sha
-
     def push(self, branch_name: str, force: bool = False) -> None:
         """Push branch to remote origin.
 
@@ -229,20 +183,6 @@ class GitClient:
 
         return result.stdout
 
-    def get_branches(self) -> list[str]:
-        """List local branch names.
-
-        Returns:
-            List of branch names.
-
-        Raises:
-            GitError: If branch listing fails.
-        """
-
-        result = self._git("branch")
-        lines = result.stdout.strip().split("\n")
-        return [line.replace("* ", "").strip() for line in lines if line.strip()]
-
     def checkout(self, ref: str) -> None:
         """Checkout a branch, tag, or commit.
 
@@ -278,23 +218,6 @@ class GitClient:
         sha = self.get_head_sha()
         logger.info("Merged %s into current branch (%s)", branch, sha[:7])
         return sha
-
-    def pull(self, branch: str | None = None) -> None:
-        """Pull latest changes from remote.
-
-        Args:
-            branch: Optional branch to pull. If None, pulls current branch.
-
-        Raises:
-            GitError: If pull fails.
-        """
-
-        if branch:
-            self._git("pull", "origin", branch)
-        else:
-            self._git("pull")
-
-        logger.info("Pulled latest changes")
 
     @staticmethod
     def get_branch_for_task(task_id: str) -> str:

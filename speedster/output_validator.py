@@ -15,12 +15,10 @@ from speedster.contracts.em_breakdown import (
 )
 from speedster.contracts.engineer_contract import (
     ContractValidationError as EngineerContractError,
-    validate_engineer_input as _validate_engineer_input,
     validate_engineer_output as _validate_engineer_output,
 )
 from speedster.contracts.qa_contract import (
     ContractValidationError as QAContractError,
-    validate_qa_input as _validate_qa_input,
     validate_qa_output as _validate_qa_output,
 )
 from speedster.exceptions import ValidationError
@@ -35,9 +33,7 @@ class OutputValidator:
 
     OUTPUT_TYPES = {
         "em_breakdown": "EM planning output (breakdown tree)",
-        "engineer_input": "Orchestrator -> Engineer dispatch payload",
         "engineer_output": "Engineer -> Orchestrator response",
-        "qa_input": "Orchestrator -> QA dispatch payload",
         "qa_output": "QA -> Orchestrator review response",
     }
 
@@ -73,12 +69,8 @@ class OutputValidator:
         try:
             if output_type == "em_breakdown":
                 _validate_em_breakdown(data)
-            elif output_type == "engineer_input":
-                _validate_engineer_input(data)
             elif output_type == "engineer_output":
                 _validate_engineer_output(data)
-            elif output_type == "qa_input":
-                _validate_qa_input(data)
             elif output_type == "qa_output":
                 _validate_qa_output(data)
 
@@ -99,22 +91,10 @@ class OutputValidator:
             raise ValidationError("EM output is not valid JSON")
         return result
 
-    def validate_engineer_input(self, data: dict[str, Any] | str) -> dict[str, Any]:
-        result = self.validate(data, "engineer_input")
-        if result is None:
-            raise ValidationError("Engineer input is not valid JSON")
-        return result
-
     def validate_engineer_output(self, data: dict[str, Any] | str) -> dict[str, Any]:
         result = self.validate(data, "engineer_output")
         if result is None:
             raise ValidationError("Engineer output is not valid JSON")
-        return result
-
-    def validate_qa_input(self, data: dict[str, Any] | str) -> dict[str, Any]:
-        result = self.validate(data, "qa_input")
-        if result is None:
-            raise ValidationError("QA input is not valid JSON")
         return result
 
     def validate_qa_output(self, data: dict[str, Any] | str) -> dict[str, Any]:

@@ -16,9 +16,6 @@ class Task:
     description: str
     priority: str = "medium"
     status: str = "pending"
-    created_at: str = ""
-    model_override: str | None = None
-    context_dir: Path = field(default_factory=Path)
     breakdown: dict[str, Any] | None = field(default=None, repr=False)
 
     @property
@@ -48,9 +45,6 @@ class TaskManager:
             description=data.get("description", ""),
             priority=data.get("priority", "medium"),
             status=data.get("status", "pending"),
-            created_at=data.get("created_at", ""),
-            model_override=data.get("model_override"),
-            context_dir=self.task_dir / task_id / "context",
         )
 
         # Load breakdown if available

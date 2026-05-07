@@ -43,7 +43,6 @@ DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "em_b
 _SOLID_PREFIX = "The implementation adheres to SOLID principles by "
 _YAGNI_KISS_PREFIX = "The implementation adheres to YAGNI and KISS by "
 _TESTING_PREFIX = "Well-designed unit tests cover "
-_TESTING_REQUIRED_PHRASE = "minimum unit test coverage of 80%+ for touched modules."
 __all__ = [
     "BreakdownValidationError",
     "load_breakdown",
@@ -61,11 +60,6 @@ def _iter_tasks(root: dict[str, Any]) -> Iterable[dict[str, Any]]:
         children = node.get("tasks") or []
         for child in reversed(children):
             stack.append(child)
-
-
-def _collect_ids(root: dict[str, Any]) -> list[str]:
-    """Return every task id in the tree (duplicates preserved)."""
-    return [t["id"] for t in _iter_tasks(root)]
 
 
 def normalize_breakdown(breakdown: dict[str, Any]) -> dict[str, Any]:
@@ -108,10 +102,6 @@ def _validate_structural(breakdown: dict[str, Any]) -> None:
         if not ac["testing"].startswith(_TESTING_PREFIX):
             raise BreakdownValidationError(
                 f"`acceptance_criteria.testing` prefix invalid in {node['id']}."
-            )
-        if _TESTING_REQUIRED_PHRASE not in ac["testing"]:
-            raise BreakdownValidationError(
-                f"`acceptance_criteria.testing` missing required coverage phrase in {node['id']}."
             )
         if len(set(node["context_files"])) != len(node["context_files"]):
             raise BreakdownValidationError(f"Duplicate `context_files` in {node['id']}.")

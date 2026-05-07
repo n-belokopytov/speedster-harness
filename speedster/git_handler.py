@@ -11,7 +11,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from speedster.git.git_client import GitClient, GitError
+from speedster.git.git_client import GitClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,25 +77,6 @@ class GitHandler:
 
         self.git_client.clone()
 
-    def prepare_branch(self, task_id: str) -> str:
-        """Create a branch for a task (if not already exists).
-
-        Called after EM planning, before engineer work.
-
-        Args:
-            task_id: The task identifier.
-
-        Returns:
-            Branch name for the task.
-
-        Raises:
-            GitError: If branch creation fails.
-        """
-
-        branch_name = GitClient.get_branch_for_task(task_id)
-        self._task_branches[task_id] = branch_name
-        return branch_name
-
     def record_implementation(
         self, task_id: str, branch: str, commit_sha: str
     ) -> None:
@@ -114,34 +95,6 @@ class GitHandler:
             branch,
             commit_sha[:7] if commit_sha else "N/A",
         )
-
-    def get_diff_for_qa(self, task_id: str) -> str:
-        """Retrieve the diff for QA review.
-
-        Fetches the task's branch and computes diff against the default branch.
-
-        Args:
-            task_id: The task identifier.
-
-        Returns:
-            Unified diff string.
-
-        Raises:
-            GitError: If diff retrieval fails.
-            KeyError: If no branch is recorded for the task.
-        """
-
-        branch_name = self._task_branches.get(task_id)
-        if not branch_name:
-            raise KeyError(f"No branch recorded for task {task_id}")
-
-        # Fetch the branch from remote
-        self.git_client.fetch("origin", branch_name)
-
-        # Checkout the branch and get diff
-        self.git_client.checkout(branch_name)
-        diff = self.git_client.get_diff(f"origin/{self.default_branch}")
-        return diff
 
     def merge_to_main(
         self, task_id: str, merge_message: str | None = None
@@ -185,33 +138,6 @@ class GitHandler:
         )
 
         return sha
-
-    def get_branch_info(self, task_id: str) -> dict[str, str]:
-        """Get branch and commit info for a task.
-
-        Args:
-            task_id: The task identifier.
-
-        Returns:
-            Dict with branch name and latest commit SHA on that branch.
-        """
-
-        branch_name = self._task_branches.get(task_id)
-        if not branch_name:
-            return {"branch": "", "commit_sha": ""}
-
-        # Fetch latest branch state from remote
-        try:
-            self.git_client.fetch("origin", branch_name)
-            self.git_client.checkout(branch_name)
-            commit_sha = self.git_client.get_head_sha()
-        except GitError:
-            commit_sha = ""
-
-        return {
-            "branch": branch_name,
-            "commit_sha": commit_sha,
-        }
 
     def cleanup(self) -> None:
         """Clean up temporary files if using a temp directory."""

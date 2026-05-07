@@ -145,18 +145,6 @@ class TestTaskQueries:
         assert len(events) == 2
         assert all(e["task_id"] == "task-001" for e in events)
 
-    def test_get_latest_event_for_task(self, event_log: EventLog) -> None:
-        event_log.append("task-001", "TaskCreated", "orchestrator", "", "Task 1")
-        event_log.append("task-001", "PlanningCompleted", "em", "model", "Planned")
-
-        latest = event_log.get_latest_event_for_task("task-001")
-        assert latest is not None
-        assert latest["event_type"] == "PlanningCompleted"
-
-    def test_get_latest_event_no_events(self, event_log: EventLog) -> None:
-        latest = event_log.get_latest_event_for_task("nonexistent")
-        assert latest is None
-
 
 class TestDurability:
     def test_fsync_on_append(self, event_log_path: Path) -> None:
