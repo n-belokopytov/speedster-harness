@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from speedster.git.git_client import GitClient
 from speedster.git_handler import GitHandler
 
 

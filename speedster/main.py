@@ -10,7 +10,6 @@ Commands:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import signal
 import sys
@@ -250,7 +249,7 @@ def status(task_id: str, verbose: bool = False) -> None:
                 typer.echo(f"Last Event: {proj.last_event_type}")
                 typer.echo(f"Last Message: {proj.last_event}")
                 typer.echo(f"Next Step: {proj.next_step()}")
-                typer.echo(f"Event History:")
+                typer.echo("Event History:")
                 for i, et in enumerate(proj.event_types):
                     typer.echo(f"  {i + 1}. {et}")
             else:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, Callable
 
 from speedster.agent_client import AgentClient, AgentResponse
@@ -19,7 +18,6 @@ from speedster.git_handler import GitHandler
 from speedster.interfaces import AgentGateway, EventStore
 from speedster.models import StepResult
 from speedster.output_validator import OutputValidator, ValidationError
-from speedster.prompt_builder import PromptBuilder
 from speedster.response_parser import ResponseParser
 from speedster.task_manager import TaskManager, Task
 
@@ -47,7 +45,6 @@ class Orchestrator:
         self.agent_gateway: AgentGateway = agent_gateway or AgentClient()
         self.task_manager = task_manager or TaskManager(self.config.task_dir)
         self.validator = validator or OutputValidator()
-        self.prompt_builder = PromptBuilder(self.config)
         self.response_parser = ResponseParser()
         self.git_handler = git_handler
         self._owns_gateway = agent_gateway is None
@@ -325,7 +322,7 @@ class Orchestrator:
     async def _run_with_retry(
         self,
         url: str,
-        prompt: str,
+        payload: dict[str, Any],
         validate_fn: Callable[[str], Any],
         max_retries: int = 1,
     ) -> AgentResponse:
@@ -333,7 +330,7 @@ class Orchestrator:
 
         Args:
             url: Agent container URL
-            prompt: Prompt to send
+            payload: Structured request data to send
             validate_fn: Validator function that raises ValidationError on failure
             max_retries: Number of retry attempts after initial failure
 
@@ -342,7 +339,7 @@ class Orchestrator:
         """
 
         for attempt in range(1, max_retries + 2):
-            response = await self.agent_gateway.work(url, prompt)
+            response = await self.agent_gateway.work(url, payload)
             try:
                 validate_fn(response.output)
                 return response
@@ -355,7 +352,10 @@ class Orchestrator:
                     max_retries + 1,
                     exc,
                 )
-                prompt = f"{prompt}\n\nPrevious validation error: {exc}"
+                payload["description"] = (
+                    f"{payload.get('description', '')}\n\n"
+                    f"Previous validation error: {exc}"
+                )
 
     async def _run_em(self, task: Task) -> StepResult:
         """Run the EM agent for planning."""
@@ -363,26 +363,42 @@ class Orchestrator:
         em_config = self.config.roles.roles.get("em")
         model_name = em_config.model.model if em_config else "vllm/em-default"
 
-        prompt = self.prompt_builder.build_em(task)
-        return await self._run_em_with_prompt(prompt)
+        payload = {
+            "task_id": task.id,
+            "description": task.description,
+            "priority": task.priority,
+        }
+        response = await self._run_with_retry(
+            self.config.em_url,
+            payload,
+            self.validator.validate_em_breakdown,
+        )
+
+        return StepResult(
+            role="em",
+            model=model_name,
+            output=response.output,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
+        )
 
     async def _run_em_for_context(
         self, task: Task, requested_context: list[str]
     ) -> StepResult:
         """Run the EM agent to resolve a context request from the engineer."""
 
-        prompt = self.prompt_builder.build_em_context(task, requested_context)
-        return await self._run_em_with_prompt(prompt)
-
-    async def _run_em_with_prompt(self, prompt: str) -> StepResult:
-        """Run the EM agent with a given prompt."""
-
         em_config = self.config.roles.roles.get("em")
         model_name = em_config.model.model if em_config else "vllm/em-default"
 
+        payload = {
+            "task_id": task.id,
+            "description": task.description,
+            "priority": task.priority,
+            "requested_context": requested_context,
+        }
         response = await self._run_with_retry(
             self.config.em_url,
-            prompt,
+            payload,
             self.validator.validate_em_breakdown,
         )
 
@@ -406,14 +422,19 @@ class Orchestrator:
         eng_config = self.config.roles.roles.get("engineer")
         model_name = eng_config.model.model if eng_config else "vllm/engineer-default"
 
-        prompt = self.prompt_builder.build_engineer(
-            task, plan, round_num, qa_feedback
-        )
-        eng_url = self.config.eng_url
+        payload = {
+            "task_id": task.id,
+            "description": task.description,
+            "priority": task.priority,
+            "plan": plan.output,
+            "round_num": round_num,
+        }
+        if qa_feedback:
+            payload["qa_feedback"] = qa_feedback
 
         response = await self._run_with_retry(
-            eng_url,
-            prompt,
+            self.config.eng_url,
+            payload,
             self.validator.validate_engineer_output,
         )
 
@@ -434,12 +455,16 @@ class Orchestrator:
         qa_config = self.config.roles.roles.get("qa")
         model_name = qa_config.model.model if qa_config else "vllm/qa-default"
 
-        prompt = self.prompt_builder.build_qa(task, engineer_result, round_num)
-        qa_url = self.config.qa_url
-
+        payload = {
+            "task_id": task.id,
+            "description": task.description,
+            "priority": task.priority,
+            "plan": engineer_result.output,
+            "round_num": round_num,
+        }
         response = await self._run_with_retry(
-            qa_url,
-            prompt,
+            self.config.qa_url,
+            payload,
             self.validator.validate_qa_output,
         )
 

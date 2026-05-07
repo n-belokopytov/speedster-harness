@@ -28,7 +28,6 @@ class HealthResponse:
     """Structured response from an agent /health call."""
 
     status: str
-    model: str = ""
     gpu_mem: str = ""
 
 
@@ -71,14 +70,14 @@ class AgentClient:
     async def work(
         self,
         url: str,
-        message: str,
+        payload: dict[str, Any],
         session_id: str | None = None,
     ) -> AgentResponse:
         """Send a /work request to an agent container.
 
         Args:
             url: Agent base URL (e.g. "http://em-agent:8080")
-            message: The prompt/message to send
+            payload: Structured request data (task_id, description, etc.)
             session_id: Optional session identifier
 
         Returns:
@@ -90,9 +89,9 @@ class AgentClient:
         """
 
         client = await self._get_client()
-        payload = {"message": message}
+        request_data = dict(payload)
         if session_id:
-            payload["session_id"] = session_id
+            request_data["session_id"] = session_id
 
         last_error: Exception | None = None
 
@@ -100,7 +99,7 @@ class AgentClient:
             try:
                 response = await client.post(
                     f"{url}/work",
-                    json=payload,
+                    json=request_data,
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
@@ -153,7 +152,6 @@ class AgentClient:
 
             return HealthResponse(
                 status=data.get("status", "unknown"),
-                model=data.get("model", ""),
                 gpu_mem=data.get("gpu_mem", ""),
             )
 
@@ -165,4 +163,4 @@ class AgentClient:
         """Close the underlying HTTP client."""
 
         if self._client and not self._client.is_closed:
-            await self._client.close()
+            await self._client.aclose()

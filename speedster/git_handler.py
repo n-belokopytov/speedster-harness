@@ -10,7 +10,6 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from speedster.git.git_client import GitClient, GitError
 

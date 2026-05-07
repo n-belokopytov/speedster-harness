@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -244,76 +243,6 @@ class TestOrchestratorInit:
         assert orchestrator.task_manager is not None
 
 
-class TestBuildPrompts:
-    def test_build_em_prompt(self, orchestrator: Orchestrator, task: Task) -> None:
-        prompt = orchestrator.prompt_builder.build_em(task)
-        assert "EM system prompt" in prompt
-        assert "task-test" in prompt
-        assert "Add user authentication" in prompt
-
-    def test_build_engineer_prompt(
-        self, orchestrator: Orchestrator, task: Task
-    ) -> None:
-        plan = StepResult(
-            role="em",
-            model="vllm/em-test",
-            output=json.dumps(make_valid_breakdown()),
-        )
-        prompt = orchestrator.prompt_builder.build_engineer(task, plan, 1)
-        assert "Engineer system prompt" in prompt
-        assert "task-test" in prompt
-
-    def test_build_engineer_prompt_with_feedback(
-        self, orchestrator: Orchestrator, task: Task
-    ) -> None:
-        plan = StepResult(
-            role="em",
-            model="vllm/em-test",
-            output=json.dumps(make_valid_breakdown()),
-        )
-        prompt = orchestrator.prompt_builder.build_engineer(
-            task, plan, 2, qa_feedback=["Missing error handling", "Add input validation"]
-        )
-        assert "QA Feedback" in prompt
-        assert "Missing error handling" in prompt
-        assert "Add input validation" in prompt
-
-    def test_build_engineer_prompt_without_feedback(
-        self, orchestrator: Orchestrator, task: Task
-    ) -> None:
-        plan = StepResult(
-            role="em",
-            model="vllm/em-test",
-            output=json.dumps(make_valid_breakdown()),
-        )
-        prompt = orchestrator.prompt_builder.build_engineer(task, plan, 2, qa_feedback=None)
-        assert "QA Feedback" not in prompt
-
-    def test_build_qa_prompt(
-        self, orchestrator: Orchestrator, task: Task
-    ) -> None:
-        engineer_result = StepResult(
-            role="engineer",
-            model="vllm/engineer-test",
-            output=json.dumps(make_valid_engineer_output()),
-        )
-        prompt = orchestrator.prompt_builder.build_qa(task, engineer_result, 1)
-        assert "QA system prompt" in prompt
-        assert "task-test" in prompt
-        assert "Round 1" in prompt
-
-    def test_build_em_context_prompt(
-        self, orchestrator: Orchestrator, task: Task
-    ) -> None:
-        prompt = orchestrator.prompt_builder.build_em_context(
-            task, requested_context=["src/config.py", "README.md"]
-        )
-        assert "EM system prompt" in prompt
-        assert "Context Requested" in prompt
-        assert "src/config.py" in prompt
-        assert "README.md" in prompt
-
-
 class TestProcessTask:
     @pytest.mark.asyncio
     async def test_em_to_qa_approve_path(
@@ -383,7 +312,7 @@ class TestProcessTask:
     async def test_qa_feedback_passed_to_engineer(
         self, orchestrator: Orchestrator, task: Task, tmp_path: Path
     ) -> None:
-        """Test that QA feedback is injected into engineer prompt on re-dispatch."""
+        """Test that QA feedback is passed to engineer on re-dispatch."""
 
         em_output = json.dumps(make_valid_breakdown())
         engineer_output = json.dumps(make_valid_engineer_output())
@@ -408,9 +337,9 @@ class TestProcessTask:
             c for c in calls if len(c[0]) >= 1 and "8082" in c[0][0]
         ]
         assert len(engineer_calls) == 2
-        second_eng_prompt = engineer_calls[1][0][1]
-        assert "QA Feedback" in second_eng_prompt
-        assert "Missing error handling" in second_eng_prompt
+        second_eng_payload = engineer_calls[1][0][1]
+        assert "qa_feedback" in second_eng_payload
+        assert "Missing error handling" in second_eng_payload["qa_feedback"]
 
 
 class TestEngineerStatuses:

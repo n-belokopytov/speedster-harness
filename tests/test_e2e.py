@@ -7,7 +7,6 @@ through the full EM -> Engineer -> QA loop over real HTTP.
 from __future__ import annotations
 
 import json
-import shutil
 import threading
 from pathlib import Path
 
@@ -27,7 +26,6 @@ from speedster.config import (
     StorageConfig,
 )
 from speedster.orchestrator import Orchestrator
-from speedster.task_manager import Task
 
 
 def _opencode_on_path() -> bool:
@@ -132,7 +130,6 @@ def real_agent_servers():
     qa_ready = threading.Event()
 
     import tempfile
-    import os
 
     tmp_workspace = tempfile.mkdtemp()
     em_server, em_thread = _start_agent("em", em_port, em_ready, mock_mode=False, repo_root=tmp_workspace)
@@ -251,7 +248,10 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['em']}/work",
-                json={"message": "Produce a plan for task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Produce a plan for task-e2e",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -265,7 +265,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['engineer']}/work",
-                json={"message": "Implement task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Implement task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -278,7 +282,11 @@ class TestE2EHTTP:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(
                 f"{agent_servers['qa']}/work",
-                json={"message": "Review task-e2e"},
+                json={
+                    "task_id": "task-e2e",
+                    "description": "Review task-e2e",
+                    "plan": "{}",
+                },
             )
             assert resp.status_code == 200
             data = resp.json()

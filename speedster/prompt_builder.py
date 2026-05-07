@@ -66,7 +66,7 @@ class PromptBuilder:
 
         if round_num > 1 and qa_feedback:
             feedback_text = "\n".join(f"- {item}" for item in qa_feedback)
-            prompt += f"## QA Feedback from Previous Round\n"
+            prompt += "## QA Feedback from Previous Round\n"
             prompt += f"{feedback_text}\n\n"
             prompt += "Please address the above feedback.\n\n"
 
