@@ -443,9 +443,9 @@ class TestE2ERealModel:
 
         config = AgentConfig(
             connectivity=ConnectivityConfig(
-                em_url=agent_servers["em"],
-                eng_url=agent_servers["engineer"],
-                qa_url=agent_servers["qa"],
+                em_url=real_agent_servers["em"],
+                eng_url=real_agent_servers["engineer"],
+                qa_url=real_agent_servers["qa"],
             ),
             storage=StorageConfig(
                 event_log=EventLogConfig(path=event_log_path),

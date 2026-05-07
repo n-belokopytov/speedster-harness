@@ -35,6 +35,7 @@ class WorkRequest(BaseModel):
     round_num: int = 1
     qa_feedback: list[str] | None = None
     requested_context: list[str] | None = None
+    validation_error: str | None = None
     session_id: str | None = None
 
 
@@ -217,6 +218,13 @@ class AgentServer:
                 lines.append(request.plan)
                 lines.append("")
             lines.append("Please review and produce a QA review with findings.")
+
+        if request.validation_error:
+            lines.append("")
+            lines.append("## Previous Validation Error")
+            lines.append(request.validation_error)
+            lines.append("")
+            lines.append("Please correct your output to address the validation error above.")
 
         return "\n".join(lines)
 
