@@ -17,7 +17,7 @@ _resolve_script_dir() {
         src="$(readlink "$src")"
         [[ "$src" != /* ]] && src="$dir/$src"
     done
-    echo "$(cd "$(dirname "$src")" && pwd)"
+    (cd "$(dirname "$src")" && pwd)
 }
 
 # LIB_DIR is setup/; SCRIPT_DIR is the project root

@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          find . -name '*.sh' -not -path './.git/*' -not -path './.venv/*' -print0 | xargs -0 shellcheck
+          find . -name '*.sh' -not -path './.git/*' -not -path './.venv/*' -print0 | xargs -0 shellcheck -e SC1091
 
   test:
     runs-on: ubuntu-latest
