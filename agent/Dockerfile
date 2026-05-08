@@ -23,8 +23,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent/ ./agent/
 COPY prompts/ ./prompts/
-COPY schemas/ ./schemas/
-COPY tools/ ./tools/
 
 EXPOSE 8080
 
