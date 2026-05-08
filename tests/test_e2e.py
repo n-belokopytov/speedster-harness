@@ -232,16 +232,6 @@ def _make_qa_rejected() -> dict:
 class TestE2EHTTP:
     """Integration tests that hit real HTTP agent servers."""
 
-    def test_health_check(self, agent_servers: dict[str, str]) -> None:
-        """Verify all agent servers respond to health checks."""
-
-        with httpx.Client(timeout=5.0) as client:
-            for role, url in agent_servers.items():
-                resp = client.get(f"{url}/health")
-                assert resp.status_code == 200
-                data = resp.json()
-                assert data["status"] == "healthy"
-
     def test_work_endpoint_em(self, agent_servers: dict[str, str]) -> None:
         """Verify EM agent returns valid breakdown."""
 

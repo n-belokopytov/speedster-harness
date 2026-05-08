@@ -11,7 +11,7 @@ class AgentConfig:
     """Configuration for an agent container."""
 
     role: str = field(default_factory=lambda: os.getenv("ROLE", "em"))
-    model: str = field(default_factory=lambda: os.getenv("MODEL", "vllm/default"))
+    model: str = field(default_factory=lambda: os.getenv("MODEL", "default"))
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8080")))
     git_ssh_key: str = field(

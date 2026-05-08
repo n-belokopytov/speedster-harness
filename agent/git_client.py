@@ -1,8 +1,8 @@
 """Git client for agent containers.
 
-Handles clone, branch, commit, and push operations with SSH key auth.
-Each agent clones the target repo on startup and pushes changes after
-each task attempt.
+Handles clone and branch operations with SSH key auth.
+Each agent clones the target repo on startup and creates a
+dedicated branch per task.
 """
 
 from __future__ import annotations
@@ -117,107 +117,6 @@ class GitClient:
             raise GitError(f"Clone failed: {stderr}")
 
         logger.info("Clone successful")
-
-    def fetch(self, remote: str, ref: str) -> None:
-        """Fetch a specific ref from a remote.
-
-        Args:
-            remote: Remote name (e.g., 'origin').
-            ref: Branch or ref to fetch (e.g., 'main', 'speedster/task-001').
-
-        Raises:
-            GitError: If fetch fails.
-        """
-
-        self._git("fetch", remote, ref)
-
-    def push(self, branch_name: str, force: bool = False) -> None:
-        """Push branch to remote origin.
-
-        Args:
-            branch_name: Branch to push.
-            force: If True, force push the branch.
-
-        Raises:
-            GitError: If push fails.
-        """
-
-        args = ["push", "origin", branch_name]
-        if force:
-            args.append("--force")
-
-        self._git(*args)
-        logger.info("Pushed branch %s to origin", branch_name)
-
-    def get_head_sha(self) -> str:
-        """Return the HEAD commit SHA.
-
-        Returns:
-            Full 40-character SHA.
-
-        Raises:
-            GitError: If HEAD SHA cannot be determined.
-        """
-
-        result = self._git("rev-parse", "HEAD")
-        return result.stdout.strip()
-
-    def get_diff(self, base_ref: str | None = None) -> str:
-        """Get the diff for staged/unstaged changes.
-
-        Args:
-            base_ref: Optional base ref to diff against (e.g., origin/main).
-                If None, diffs working tree against HEAD.
-
-        Returns:
-            Unified diff string.
-
-        Raises:
-            GitError: If diff fails.
-        """
-
-        if base_ref:
-            result = self._git("diff", base_ref)
-        else:
-            result = self._git("diff", "HEAD")
-
-        return result.stdout
-
-    def checkout(self, ref: str) -> None:
-        """Checkout a branch, tag, or commit.
-
-        Args:
-            ref: Branch name, tag, or commit SHA to checkout.
-
-        Raises:
-            GitError: If checkout fails.
-        """
-
-        self._git("checkout", ref)
-        logger.info("Checked out %s", ref)
-
-    def merge(self, branch: str, message: str | None = None) -> str:
-        """Merge a branch into the current branch.
-
-        Args:
-            branch: Branch to merge.
-            message: Optional merge commit message. If None, uses default.
-
-        Returns:
-            Full SHA of the resulting commit.
-
-        Raises:
-            GitError: If merge fails or conflicts arise.
-        """
-
-        args = ["merge", branch]
-        if message:
-            args.extend(["-m", message])
-
-        self._git(*args)
-        sha = self.get_head_sha()
-        logger.info("Merged %s into current branch (%s)", branch, sha[:7])
-        return sha
 
     @staticmethod
     def get_branch_for_task(task_id: str) -> str:

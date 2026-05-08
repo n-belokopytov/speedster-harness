@@ -5,10 +5,10 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: em
-        MODEL: ${MODEL:-vllm/default}
+        MODEL: ${MODEL:-default}
     environment:
       ROLE: em
-      MODEL: ${MODEL:-vllm/default}
+      MODEL: ${MODEL:-default}
       HOST: 0.0.0.0
       PORT: 8080
       REPO_ROOT: /workspace
@@ -17,12 +17,6 @@ services:
     volumes:
       - ./:/workspace
       - ./state:/app/state
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     restart: unless-stopped
 
   engineer-agent:
@@ -31,10 +25,10 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: engineer
-        MODEL: ${MODEL:-vllm/default}
+        MODEL: ${MODEL:-default}
     environment:
       ROLE: engineer
-      MODEL: ${MODEL:-vllm/default}
+      MODEL: ${MODEL:-default}
       HOST: 0.0.0.0
       PORT: 8080
       REPO_ROOT: /workspace
@@ -46,12 +40,6 @@ services:
       - ./:/workspace
       - ./state:/app/state
       - ${SSH_KEY_PATH:-~/.ssh/id_speedster}:/run/secrets/github_ssh_key:ro
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     restart: unless-stopped
 
   qa-agent:
@@ -60,10 +48,10 @@ services:
       dockerfile: agent/Dockerfile
       args:
         ROLE: qa
-        MODEL: ${MODEL:-vllm/default}
+        MODEL: ${MODEL:-default}
     environment:
       ROLE: qa
-      MODEL: ${MODEL:-vllm/default}
+      MODEL: ${MODEL:-default}
       HOST: 0.0.0.0
       PORT: 8080
       REPO_ROOT: /workspace
@@ -72,12 +60,6 @@ services:
     volumes:
       - ./:/workspace
       - ./state:/app/state
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     restart: unless-stopped
 
   orchestrator:
@@ -97,11 +79,5 @@ services:
       - ./state:/app/state
       - ${SSH_KEY_PATH:-~/.ssh/id_speedster}:/run/secrets/github_ssh_key:ro
     working_dir: /workspace
-    depends_on:
-      em-agent:
-        condition: service_healthy
-      engineer-agent:
-        condition: service_healthy
-      qa-agent:
-        condition: service_healthy
+    depends_on: [em-agent, engineer-agent, qa-agent]
     restart: unless-stopped

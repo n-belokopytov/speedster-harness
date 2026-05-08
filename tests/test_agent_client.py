@@ -1,182 +1,202 @@
-"""Unit tests for AgentClient HTTP communication.
+"""Unit tests for AgentClient (one-shot PI CLI client).
 
-Covers work() response parsing (including model propagation),
-retry behavior, health checks, and context manager lifecycle.
+Covers subprocess.run mocking for happy path, timeout, CLI not found,
+git SSH key injection, empty output, process error, and argument passing.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 
-from speedster.agent_client import AgentClient
+from agent.agent_client import AgentClient, AgentResponse
 
 
-def _mock_response(data: dict, status_code: int = 200) -> MagicMock:
-    """Build a mock httpx.Response with the given JSON data."""
-
-    mock = MagicMock()
-    mock.status_code = status_code
-    mock.raise_for_status = lambda: None
-    mock.json = MagicMock(return_value=data)
-    return mock
+@pytest.fixture
+def workspace_root(tmp_path: Path) -> Path:
+    """Create a temporary workspace root."""
+    return tmp_path
 
 
-class TestAgentClientWork:
-    """Test the /work endpoint client logic."""
+@pytest.fixture
+def agent_client(workspace_root: Path) -> AgentClient:
+    """Create an AgentClient with test defaults."""
+    return AgentClient(
+        model="default",
+        system_prompt="You are a test agent.",
+        workspace_root=workspace_root,
+        timeout_seconds=10,
+    )
 
-    async def test_work_returns_all_fields(self) -> None:
-        """All server response fields are propagated correctly."""
 
-        client = AgentClient()
-        mock_resp = _mock_response({
-            "session_id": "sess-123",
-            "output": '{"status": "implemented"}',
-            "tokens_used": 500,
-            "latency_ms": 1200,
-        })
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=AsyncMock(return_value=mock_resp))
-            result = await client.work(
-                "http://agent:8080",
-                {"task_id": "task-001", "description": "test"},
+# --- Tests ---
+
+
+class TestAgentClientHappyPath:
+    """Test successful PI CLI invocation."""
+
+    def test_returns_output_correctly(self, agent_client: AgentClient) -> None:
+        """Happy path: subprocess returns output, AgentResponse is returned."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Here is the agent output\n"
+        mock_result.stderr = ""
+
+        with patch("agent.agent_client.subprocess.run", return_value=mock_result):
+            response = agent_client.process_message("test message")
+
+        assert isinstance(response, AgentResponse)
+        assert response.output == "Here is the agent output"
+
+    def test_system_prompt_and_message_in_command_args(
+        self, agent_client: AgentClient
+    ) -> None:
+        """The pi command includes --append-system-prompt and the message."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.agent_client.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            agent_client.process_message("hello world")
+
+        call_args = mock_run.call_args.args[0]
+        assert "pi" in call_args
+        assert "-p" in call_args
+        assert "--no-session" in call_args
+        assert "--model" in call_args
+        assert "default" in call_args
+        assert "--append-system-prompt" in call_args
+        assert "You are a test agent." in call_args
+        assert "hello world" in call_args
+
+
+class TestAgentClientTimeout:
+    """Test timeout handling."""
+
+    def test_timeout_raises_runtime_error(
+        self, agent_client: AgentClient
+    ) -> None:
+        """subprocess.TimeoutExpired raises RuntimeError."""
+        with patch("agent.agent_client.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd=["pi"], timeout=10
             )
+            with pytest.raises(RuntimeError, match="timed out"):
+                agent_client.process_message("test")
 
-        assert result.session_id == "sess-123"
-        assert '{"status": "implemented"}' in result.output
-        assert result.tokens_used == 500
-        assert result.latency_ms == 1200
-        assert result.error is None
 
-    async def test_work_defaults_missing_optional_fields(self) -> None:
-        """Missing optional fields in server response default gracefully."""
+class TestAgentClientNotFound:
+    """Test CLI not found handling."""
 
-        client = AgentClient()
-        mock_resp = _mock_response({
-            "session_id": "sess-456",
-            "output": "partial response",
-        })
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=AsyncMock(return_value=mock_resp))
-            result = await client.work(
-                "http://agent:8080",
-                {"task_id": "task-002"},
-            )
+    def test_cli_not_found_raises_runtime_error(
+        self, agent_client: AgentClient
+    ) -> None:
+        """FileNotFoundError raises RuntimeError with helpful message."""
+        with patch("agent.agent_client.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+            with pytest.raises(RuntimeError, match="pi CLI not found"):
+                agent_client.process_message("test")
 
-        assert result.session_id == "sess-456"
-        assert result.output == "partial response"
-        assert result.tokens_used == 0
-        assert result.latency_ms == 0
 
-    async def test_work_passes_session_id(self) -> None:
-        """Session ID is forwarded to the agent when provided."""
+class TestAgentClientGitSSHKey:
+    """Test GIT_SSH_COMMAND env injection."""
 
-        client = AgentClient()
-        mock_resp = _mock_response({
-            "session_id": "sess-789",
-            "output": "ok",
-        })
-        mock_post = AsyncMock(return_value=mock_resp)
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=mock_post)
-            await client.work(
-                "http://agent:8080",
-                {"task_id": "task-003"},
-                session_id="my-session",
-            )
-
-        call_json = mock_post.call_args.kwargs["json"]
-        assert call_json["session_id"] == "my-session"
-        assert call_json["task_id"] == "task-003"
-
-    async def test_work_retries_on_http_error(self) -> None:
-        """Transient HTTP errors trigger retry up to max_retries times."""
-
-        client = AgentClient(max_retries=3, retry_delay=0.01)
-        success_resp = _mock_response({
-            "session_id": "sess-retry",
-            "output": "ok",
-        })
-        mock_post = AsyncMock(side_effect=[
-            httpx.HTTPError("timeout"),
-            httpx.HTTPError("timeout"),
-            success_resp,
-        ])
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=mock_post)
-            result = await client.work(
-                "http://agent:8080",
-                {"task_id": "task-004"},
-            )
-
-        assert result.session_id == "sess-retry"
-        assert mock_post.call_count == 3
-
-    async def test_work_raises_after_max_retries(self) -> None:
-        """After exhausting retries, the last HTTPError is raised."""
-
-        client = AgentClient(max_retries=2, retry_delay=0.01)
-        mock_post = AsyncMock(side_effect=httpx.HTTPError("server down"))
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=mock_post)
-            with pytest.raises(httpx.HTTPError, match="server down"):
-                await client.work(
-                    "http://agent:8080",
-                    {"task_id": "task-005"},
-                )
-
-    async def test_work_raises_on_4xx_response(self) -> None:
-        """A 4xx response from the agent raises HTTPError."""
-
-        client = AgentClient(max_retries=1, retry_delay=0.01)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 400
-        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "Bad Request", request=None, response=mock_resp
+    def test_git_ssh_key_set_in_env(self, workspace_root: Path) -> None:
+        """GIT_SSH_COMMAND is set in subprocess env when git_ssh_key is provided."""
+        client = AgentClient(
+            model="default",
+            system_prompt="You are a test agent.",
+            workspace_root=workspace_root,
+            git_ssh_key="/run/secrets/github_ssh_key",
         )
-        with patch.object(client, "_get_client") as mock_get:
-            mock_get.return_value = AsyncMock(post=AsyncMock(return_value=mock_resp))
-            with pytest.raises(httpx.HTTPStatusError):
-                await client.work(
-                    "http://agent:8080",
-                    {"task_id": "task-006"},
-                )
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.agent_client.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            client.process_message("test")
+
+        env = mock_run.call_args.kwargs["env"]
+        assert "GIT_SSH_COMMAND" in env
+        assert "/run/secrets/github_ssh_key" in env["GIT_SSH_COMMAND"]
+        assert "StrictHostKeyChecking=no" in env["GIT_SSH_COMMAND"]
+
+    def test_git_ssh_key_absent_not_in_env(self, agent_client: AgentClient) -> None:
+        """GIT_SSH_COMMAND is not set in env when git_ssh_key is None."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.agent_client.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            agent_client.process_message("test")
+
+        env = mock_run.call_args.kwargs["env"]
+        git_cmd = env.get("GIT_SSH_COMMAND")
+        assert not git_cmd or "github" not in git_cmd
 
 
-class TestAgentClientLifecycle:
-    """Test AgentClient initialization and context manager."""
+class TestAgentClientEmptyOutput:
+    """Test empty output handling."""
 
-    async def test_context_manager_opens_and_closes(self) -> None:
-        """__aenter__ creates client, __aexit__ closes it."""
+    def test_empty_output_raises_runtime_error(
+        self, agent_client: AgentClient
+    ) -> None:
+        """Empty stdout raises RuntimeError."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "   \n"
+        mock_result.stderr = ""
 
-        async with AgentClient() as client:
-            assert client._client is not None
-            assert not client._client.is_closed
+        with patch("agent.agent_client.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="empty output"):
+                agent_client.process_message("test")
 
-    async def test_close_is_idempotent(self) -> None:
-        """Calling close() multiple times does not raise."""
 
-        client = AgentClient()
-        await client._get_client()
-        await client.close()
-        await client.close()
+class TestAgentClientProcessError:
+    """Test non-zero exit code handling."""
 
-    async def test_get_client_reuses_existing(self) -> None:
-        """Second call to _get_client returns the same instance."""
+    def test_nonzero_exit_raises_runtime_error(
+        self, agent_client: AgentClient
+    ) -> None:
+        """Non-zero return code raises RuntimeError with stderr."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "something went wrong"
 
-        client = AgentClient()
-        c1 = await client._get_client()
-        c2 = await client._get_client()
-        assert c1 is c2
+        with patch("agent.agent_client.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="exited with code 1"):
+                agent_client.process_message("test")
 
-    async def test_get_client_reopens_after_close(self) -> None:
-        """_get_client creates a new client after close()."""
 
-        client = AgentClient()
-        c1 = await client._get_client()
-        await client.close()
-        c2 = await client._get_client()
-        assert c1 is not c2
-        assert not c2.is_closed
+class TestAgentClientValidation:
+    """Test input validation."""
+
+    def test_empty_message_raises_value_error(
+        self, agent_client: AgentClient
+    ) -> None:
+        """Empty message raises ValueError."""
+        with pytest.raises(ValueError, match="required"):
+            agent_client.process_message("   ")
+
+    def test_empty_system_prompt_raises_value_error(
+        self, workspace_root: Path
+    ) -> None:
+        """Empty system_prompt raises ValueError."""
+        client = AgentClient(
+            model="default",
+            system_prompt="",
+            workspace_root=workspace_root,
+        )
+        with pytest.raises(ValueError, match="required"):
+            client.process_message("test message")

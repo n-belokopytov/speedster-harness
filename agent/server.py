@@ -1,22 +1,21 @@
 """FastAPI HTTP server for agent containers.
 
 Exposes /work and /health endpoints for orchestrator communication.
-Wraps OpenCode ACP calls with session handling and token tracking.
+Wraps PI one-shot CLI invocations for model inference.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from agent.acp_client import ACPClient, ACPResponse
+from agent.agent_client import AgentClient
 from agent.config import AgentConfig
 from agent.git_client import GitClient
 
@@ -51,45 +50,27 @@ class HealthResponse(BaseModel):
 
     status: str
     model: str
-    gpu_mem: str = ""
-
-
-@dataclass
-class Session:
-    """Active agent session state."""
-
-    session_id: str
-    role: str
-    model: str
-    created_at: float
-    last_activity: float
-    messages: list[dict[str, str]] = None
-    _last_tokens: int = 0
-    _last_latency: int = 0
-
-    def __post_init__(self):
-        if self.messages is None:
-            self.messages = []
 
 
 class AgentServer:
     """FastAPI server for agent containers.
 
-    Manages sessions, handles work requests, and provides health checks.
+    Handles work requests and provides health checks using
+    one-shot PI CLI invocations.
     """
 
     def __init__(self, config: AgentConfig):
         self.config = config
         self.app = FastAPI(title=f"{config.role} Agent", version="0.1.0")
-        self._sessions: dict[str, Session] = {}
         self._mock_mode = config.mock_mode
 
-        self._acp_client: ACPClient | None = None
+        self._agent_client: AgentClient | None = None
         self._git_client: GitClient | None = None
 
         if not self._mock_mode:
             prompts_dir = Path(__file__).resolve().parent.parent / "prompts"
             system_prompt_path = prompts_dir / f"{config.role}_system_prompt.txt"
+            system_prompt = system_prompt_path.read_text(encoding="utf-8")
 
             repo_path = None
             if config.git_ssh_key and config.repo_url:
@@ -101,12 +82,11 @@ class AgentServer:
                 )
                 self._git_client.clone()
 
-            self._acp_client = ACPClient(
-                role=config.role,
+            self._agent_client = AgentClient(
                 model=config.model,
-                system_prompt_path=system_prompt_path,
+                system_prompt=system_prompt,
                 workspace_root=repo_path or Path(config.repo_root),
-               git_ssh_key=config.git_ssh_key,
+                git_ssh_key=config.git_ssh_key,
             )
 
         self._register_routes()
@@ -132,40 +112,18 @@ class AgentServer:
             WorkResponse with output and metadata
         """
 
-        session_id = request.session_id or str(uuid.uuid4())
-        start_time = time.time()
-
-        # Get or create session
-        session = self._sessions.get(session_id)
-        if not session:
-            session = Session(
-                session_id=session_id,
-                role=self.config.role,
-                model=self.config.model,
-                created_at=start_time,
-                last_activity=start_time,
-            )
-            self._sessions[session_id] = session
-
-        session.last_activity = start_time
+        session_id = str(uuid.uuid4())
         message = self._build_message(request)
-        session.messages.append({"role": "user", "content": message})
 
         try:
-            output = await self._process_message(session, message)
-            latency_ms = int((time.time() - start_time) * 1000)
-
-            if session._last_tokens > 0:
-                tokens_used = session._last_tokens
-            else:
-                tokens_used = len(output.split())
+            output = await self._process_message(message)
 
             return WorkResponse(
                 session_id=session_id,
                 output=output,
                 model=self.config.model,
-                tokens_used=tokens_used,
-                latency_ms=latency_ms,
+                tokens_used=0,
+                latency_ms=0,
             )
 
         except Exception as exc:
@@ -221,13 +179,10 @@ class AgentServer:
 
         return "\n".join(lines)
 
-    async def _process_message(
-        self, session: Session, message: str
-    ) -> str:
-        """Process a message through OpenCode ACP or mock.
+    async def _process_message(self, message: str) -> str:
+        """Process a message through PI CLI or mock.
 
         Args:
-            session: The active session
             message: The user message to process
 
         Returns:
@@ -235,30 +190,29 @@ class AgentServer:
         """
 
         if self._mock_mode:
-            return await self._mock_process(session, message)
+            return await self._mock_process(message)
 
-        if self._acp_client is None:
-            raise RuntimeError("ACPClient not initialized; mock_mode may be misconfigured")
+        if self._agent_client is None:
+            raise RuntimeError("AgentClient not initialized; mock_mode may be misconfigured")
 
-        response: ACPResponse = self._acp_client.process_message(message)
-        session._last_tokens = response.tokens_used
-        session._last_latency = response.latency_ms
+        response = await asyncio.to_thread(
+            self._agent_client.process_message, message
+        )
         return response.output
 
-    async def _mock_process(self, session: Session, message: str) -> str:
-        """Mock processing for testing without OpenCode ACP.
+    async def _mock_process(self, message: str) -> str:
+        """Mock processing for testing without PI CLI.
 
         Returns a valid JSON response based on the agent's role.
 
         Args:
-            session: The active session
             message: The user message
 
         Returns:
             Mock JSON output
         """
 
-        role = session.role
+        role = self.config.role
 
         if role == "em":
             return json.dumps({
@@ -329,9 +283,8 @@ class AgentServer:
         """
 
         return HealthResponse(
-            status="healthy",
+            status="ok",
             model=self.config.model,
-            gpu_mem="0%",
         )
 
     def run(self) -> None:
