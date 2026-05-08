@@ -8,7 +8,6 @@
 #
 # Options:
 #   --phase <name>        Run only one phase
-#   --agents-url <url>    Set all agent URLs to the same value
 #   --skip-docker-start   Skip auto-starting Docker containers
 #   --url <url>           Model endpoint URL (triggers pi phase)
 #   --skip-validate       Skip the validate phase
@@ -27,7 +26,7 @@ SKIP_VALIDATE="${SKIP_VALIDATE:-0}"
 SKIP_DOCKER_START="${SKIP_DOCKER_START:-0}"
 SINGLE_PHASE="${SINGLE_PHASE:-}"
 URL="${URL:-}"
-AGENTS_URL="${AGENTS_URL:-}"
+
 
 # --- Usage ---
 usage() {
@@ -49,7 +48,7 @@ Phases (executed in order):
 Options:
   --phase <name>    Run only one phase (prerequisites|venv|dependencies|
                       precommit|directories|dockercompose|pi|validate)
-  --agents-url <url> Set all agent URLs to the same value
+
   --skip-docker-start  Skip auto-starting Docker containers
   --url <url>     Model endpoint URL (triggers pi phase)
   --skip-validate   Skip the validate phase
@@ -63,7 +62,6 @@ Environment variables (passed through to pi-setup.sh):
 
 Examples:
   ./setup.sh                              # Full setup
-  ./setup.sh --agents-url http://host:9000
   ./setup.sh --phase venv                 # Create venv only
   ./setup.sh --dry-run                    # Preview all steps
   ./setup.sh --skip-validate              # Skip pytest validation
@@ -82,13 +80,9 @@ parse_args() {
                 DRY_RUN=1
                 shift
                 ;;
-            --skip-docker-start)
+           --skip-docker-start)
                 SKIP_DOCKER_START=1
                 shift
-                ;;
-            --agents-url)
-                AGENTS_URL="$2"
-                shift 2
                 ;;
             --skip-validate)
                 SKIP_VALIDATE=1
