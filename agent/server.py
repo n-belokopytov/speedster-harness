@@ -9,15 +9,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import uvicorn
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from agent.agent_client import AgentClient
 from agent.config import AgentConfig
-from agent.git_client import GitClient
+from agent.git_client import GitClient, GitClientError
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,23 @@ class HealthResponse(BaseModel):
     model: str
 
 
+class GitRequest(BaseModel):
+    """Request body for /git endpoint."""
+
+    action: str
+    branch: str
+    default_branch: str = "main"
+    message: str = ""
+
+
+class GitResponse(BaseModel):
+    """Response from /git endpoint."""
+
+    action: str
+    sha: str = ""
+    error: str | None = None
+
+
 class AgentServer:
     """FastAPI server for agent containers.
 
@@ -64,7 +83,6 @@ class AgentServer:
         self.app = FastAPI(title=f"{config.role} Agent", version="0.1.0")
         self._mock_mode = config.mock_mode
 
-        self._agent_client: AgentClient | None = None
         self._git_client: GitClient | None = None
 
         if not self._mock_mode:
@@ -82,12 +100,17 @@ class AgentServer:
                 )
                 self._git_client.clone()
 
-            self._agent_client = AgentClient(
-                model=config.model,
-                system_prompt=system_prompt,
-                workspace_root=repo_path or Path(config.repo_root),
-                git_ssh_key=config.git_ssh_key,
-            )
+            self._model = config.model
+            self._system_prompt = system_prompt
+            self._workspace_root = repo_path or Path(config.repo_root)
+            self._timeout_seconds = 600
+            self._git_ssh_key = config.git_ssh_key
+        else:
+            self._model = config.model
+            self._system_prompt = ""
+            self._workspace_root = Path("/")
+            self._timeout_seconds = 600
+            self._git_ssh_key = None
 
         self._register_routes()
 
@@ -101,6 +124,10 @@ class AgentServer:
         @self.app.get("/health")
         async def health() -> HealthResponse:
             return self.health_check()
+
+        @self.app.post("/git")
+        async def git(req: GitRequest) -> GitResponse:
+            return await self.handle_git(req)
 
     async def handle_work(self, request: WorkRequest) -> WorkResponse:
         """Handle a /work request.
@@ -179,6 +206,58 @@ class AgentServer:
 
         return "\n".join(lines)
 
+    def _process_message_via_cli(self, message: str) -> str:
+        """Process a message through the PI one-shot CLI.
+
+        Args:
+            message: The user message to process
+
+        Returns:
+            The agent's output
+
+        Raises:
+            ValueError: If system_prompt or message is empty
+            RuntimeError: If PI CLI fails
+        """
+
+        if not self._system_prompt or not message.strip():
+            raise ValueError("system_prompt and message are required")
+
+        env = os.environ.copy()
+        if self._git_ssh_key:
+            env["GIT_SSH_COMMAND"] = f"ssh -i '{self._git_ssh_key}' -o StrictHostKeyChecking=no"
+
+        try:
+            result = subprocess.run(
+                [
+                    "pi", "-p", "--no-session",
+                    "--model", self._model,
+                    "--append-system-prompt", self._system_prompt,
+                    message,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_seconds,
+                env=env,
+                cwd=str(self._workspace_root),
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "pi CLI not found. Ensure @earendil-works/pi-coding-agent "
+                "is installed and on PATH."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"PI timed out after {self._timeout_seconds}s") from exc
+
+        if result.returncode != 0:
+            raise RuntimeError(f"PI exited with code {result.returncode}: {result.stderr}")
+
+        output = result.stdout.strip()
+        if not output:
+            raise RuntimeError("PI returned empty output")
+
+        return output
+
     async def _process_message(self, message: str) -> str:
         """Process a message through PI CLI or mock.
 
@@ -192,13 +271,10 @@ class AgentServer:
         if self._mock_mode:
             return await self._mock_process(message)
 
-        if self._agent_client is None:
+        if not self._system_prompt:
             raise RuntimeError("AgentClient not initialized; mock_mode may be misconfigured")
 
-        response = await asyncio.to_thread(
-            self._agent_client.process_message, message
-        )
-        return response.output
+        return await asyncio.to_thread(self._process_message_via_cli, message)
 
     async def _mock_process(self, message: str) -> str:
         """Mock processing for testing without PI CLI.
@@ -287,10 +363,31 @@ class AgentServer:
             model=self.config.model,
         )
 
+    async def handle_git(self, req: GitRequest) -> GitResponse:
+        """Handle a /git request for merge operations.
+
+        Args:
+            req: The structured git request
+
+        Returns:
+            GitResponse with sha or error
+        """
+
+        if req.action == "merge":
+            if self._git_client is None:
+                return GitResponse(action="merge", error="GitClient not initialized")
+            try:
+                self._git_client.fetch("origin", req.default_branch)
+                self._git_client.checkout(f"origin/{req.default_branch}")
+                sha = self._git_client.merge(req.branch, req.message or f"Merge {req.branch}")
+                self._git_client.push(req.default_branch)
+                return GitResponse(action="merge", sha=sha)
+            except GitClientError as exc:
+                return GitResponse(action="merge", error=str(exc))
+        return GitResponse(action=req.action, error=f"Unknown action: {req.action}")
+
     def run(self) -> None:
         """Start the FastAPI server with uvicorn."""
-
-        import uvicorn
 
         uvicorn.run(
             self.app,

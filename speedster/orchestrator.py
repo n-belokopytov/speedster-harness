@@ -280,10 +280,11 @@ class Orchestrator:
                 merge_sha = ""
                 if self.git_handler:
                     try:
-                        merge_sha = self.git_handler.merge_to_main(
+                        merge_result = await self.git_handler.merge_to_main(
                             task_id,
                             merge_message=f"Merge task {task_id} (approved by QA)",
                         )
+                        merge_sha = merge_result.sha
                         logger.info(
                             "Merged task %s into %s: %s",
                             task_id,

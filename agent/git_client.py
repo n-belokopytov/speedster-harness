@@ -19,6 +19,10 @@ class GitError(Exception):
     """Raised when a git operation fails."""
 
 
+# Alias used by server.py handle_git
+GitClientError = GitError
+
+
 class GitClient:
     """Wraps git CLI for branch-per-task workflow.
 
@@ -131,6 +135,34 @@ class GitClient:
 
         safe_id = task_id.replace("/", "-").replace(" ", "_")
         return f"speedster/{safe_id}"
+
+    def fetch(self, remote: str, branch: str) -> None:
+        """Fetch a branch from a remote."""
+        self._git("fetch", remote, branch)
+
+    def push(self, branch: str) -> None:
+        """Push a branch to origin."""
+        self._git("push", "origin", branch)
+
+    def checkout(self, ref: str) -> None:
+        """Checkout a ref."""
+        self._git("checkout", ref)
+
+    def merge(self, branch: str, message: str) -> str:
+        """Merge a branch with a given message. Returns HEAD SHA."""
+        self._git("merge", "-m", message, branch)
+        head = self._git("rev-parse", "HEAD")
+        return head.strip()
+
+    def get_head_sha(self) -> str:
+        """Return the SHA of HEAD."""
+        sha = self._git("rev-parse", "HEAD")
+        return sha.strip()
+
+    def get_diff(self, branch_a: str, branch_b: str) -> str:
+        """Return the diff between two branches."""
+        diff = self._git("diff", f"{branch_a}..{branch_b}")
+        return diff.strip()
 
     def _ssh_env(self) -> dict[str, str]:
         """Build environment dict with GIT_SSH_COMMAND when SSH key is set."""

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from speedster.git_handler import GitMergeResult
 from speedster.config import (
     AgentConfig,
     EventLogConfig,
@@ -526,7 +527,7 @@ class TestOrchestratorGitIntegration:
 
         handler = MagicMock()
         handler.record_implementation = MagicMock()
-        handler.merge_to_main = MagicMock(return_value="abcdef1234567890")
+        handler.merge_to_main = AsyncMock(return_value=GitMergeResult(sha="abcdef1234567890"))
         handler.cleanup = MagicMock()
         return handler
 

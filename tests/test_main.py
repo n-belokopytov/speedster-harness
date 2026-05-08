@@ -10,11 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from speedster.config import AgentConfig
+from speedster.config import AgentConfig, ConnectivityConfig
 
 
 class TestCreateGitHandler:
-    """Test _create_git_handler creates GitHandler when repo_url is set."""
+    """Test _create_git_handler creates GitHandler when eng_url is set."""
 
     @pytest.fixture(autouse=True)
     def _patch_typer_before_import(self):
@@ -44,12 +44,11 @@ class TestCreateGitHandler:
 
         return import_module("speedster.main")
 
-    def test_returns_git_handler_when_repo_url_set(self) -> None:
-        """Returns GitHandler instance when config has repo_url."""
+    def test_returns_git_handler_when_eng_url_set(self) -> None:
+        """Returns GitHandler instance when config has eng_url."""
 
         config = AgentConfig(
-            repo_url="git@github.com:test/repo.git",
-            git_ssh_key="/run/secrets/github_ssh_key",
+            connectivity=ConnectivityConfig(eng_url="http://localhost:8082"),
         )
 
         main_mod = self._import_main()
@@ -62,15 +61,15 @@ class TestCreateGitHandler:
 
             MockGitHandler.assert_called_once()
             call_kwargs = MockGitHandler.call_args.kwargs
-            assert call_kwargs["repo_url"] == "git@github.com:test/repo.git"
-            assert str(call_kwargs["ssh_key_path"]) == "/run/secrets/github_ssh_key"
-            mock_handler.setup.assert_called_once()
+            assert call_kwargs["engineer_agent_url"] == config.eng_url
             assert result == mock_handler
 
-    def test_returns_none_when_repo_url_unset(self) -> None:
-        """Returns None when config.repo_url is not set."""
+    def test_returns_none_when_eng_url_unset(self) -> None:
+        """Returns None when config.eng_url is empty."""
 
-        config = AgentConfig()
+        with patch.dict(os.environ, {"ENG_AGENT_URL": ""}):
+            config = AgentConfig()
+
         main_mod = self._import_main()
 
         with patch.object(main_mod, "GitHandler", new_callable=MagicMock) as MockGitHandler:
@@ -79,29 +78,11 @@ class TestCreateGitHandler:
             MockGitHandler.assert_not_called()
             assert result is None
 
-    def test_ssh_key_path_none_when_not_configured(self) -> None:
-        """ssh_key_path is None when git_ssh_key is not configured."""
-
-        config = AgentConfig(
-            repo_url="git@github.com:test/repo.git",
-        )
-
-        main_mod = self._import_main()
-
-        with patch.object(main_mod, "GitHandler", new_callable=MagicMock) as MockGitHandler:
-            mock_handler = MagicMock()
-            MockGitHandler.return_value = mock_handler
-
-            main_mod._create_git_handler(config)
-
-            call_kwargs = MockGitHandler.call_args.kwargs
-            assert call_kwargs["ssh_key_path"] is None
-
     def test_default_branch_from_config(self) -> None:
         """GitHandler receives default_branch from config.repo_default_branch."""
 
         config = AgentConfig(
-            repo_url="git@github.com:test/repo.git",
+            connectivity=ConnectivityConfig(eng_url="http://localhost:8082"),
             repo_default_branch="develop",
         )
 
@@ -120,7 +101,7 @@ class TestCreateGitHandler:
         """GitHandler receives 'main' when repo_default_branch is None."""
 
         config = AgentConfig(
-            repo_url="git@github.com:test/repo.git",
+            connectivity=ConnectivityConfig(eng_url="http://localhost:8082"),
         )
 
         main_mod = self._import_main()

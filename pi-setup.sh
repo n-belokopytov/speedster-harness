@@ -58,7 +58,10 @@ MODELS_JSON="$(curl "${CURL_ARGS[@]}" "${ENDPOINT_URL}/models")" || {
 echo "==> Found model: ${MODEL}"
 
 # Validate model name minimally
-[[ "${MODEL}" =~ [[:space:][:cntrl:]] ]] && { echo "ERROR: invalid model name: ${MODEL}" >&2; exit 1; }
+if [[ ! "${MODEL}" =~ ^[a-zA-Z0-9/_.@:-]+$ ]]; then
+  echo "ERROR: invalid model name: ${MODEL}" >&2
+  exit 1
+fi
 
 # Create config directory with secure permissions
 mkdir -p "${PI_CONFIG_DIR}"
