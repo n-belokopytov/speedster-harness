@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck opencode-setup.sh setup.sh
+          shellcheck opencode-setup.sh setup.sh setup/lib.sh setup/prerequisites.sh setup/dependencies.sh setup/directories.sh setup/venv.sh setup/precommit.sh setup/validate.sh setup/dockercompose.sh
 
   test:
     runs-on: ubuntu-latest
@@ -65,7 +65,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install jsonschema pytest pytest-asyncio
+          pip install -e ".[test]"
 
       - name: Run contract tests
         run: |
