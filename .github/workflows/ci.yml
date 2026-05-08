@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck opencode-setup.sh pi-setup.sh setup.sh setup/*.sh
+          find . -name '*.sh' -not -path './.git/*' -not -path './.venv/*' -print0 | xargs -0 shellcheck
 
   test:
     runs-on: ubuntu-latest
