@@ -17,7 +17,6 @@
 #
 
 # shellcheck source=./setup/lib.sh
-# shellcheck source=./setup/lib.sh
 source "$(dirname "$0")/setup/lib.sh"
 
 PHASES=("prerequisites" "venv" "dependencies" "precommit" "directories" "dockercompose" "pi" "validate")
