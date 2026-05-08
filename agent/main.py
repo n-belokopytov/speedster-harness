@@ -6,7 +6,6 @@ Environment variables:
     MODEL: Model identifier (e.g., vllm/default)
     HOST: Bind address (default: 0.0.0.0)
     PORT: Bind port (default: 8080)
-    TOOLS_CONFIG: Path to tools configuration YAML
     GIT_SSH_KEY: Path to Git SSH key for authentication
     REPO_ROOT: Path to cloned repository workspace
 """

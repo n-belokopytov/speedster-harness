@@ -39,21 +39,17 @@ def _configure_logging(verbose: bool) -> None:
 def _create_git_handler(config: AgentConfig) -> GitHandler | None:
     """Create a GitHandler from configuration.
 
-    Reads REPO_URL and GIT_SSH_KEY from config.
-    Returns None if repo_url is not set.
+    Delegates git operations to the engineer agent's /git endpoint.
+    Returns None if eng_url is not set.
     """
 
-    if not config.repo_url:
+    if not config.eng_url:
         return None
 
-    ssh_key_path = Path(config.git_ssh_key) if config.git_ssh_key else None
-
     git_handler = GitHandler(
-        repo_url=config.repo_url,
-        ssh_key_path=ssh_key_path,
+        engineer_agent_url=config.eng_url,
         default_branch=config.repo_default_branch or "main",
     )
-    git_handler.setup()
     return git_handler
 
 

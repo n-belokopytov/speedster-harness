@@ -14,7 +14,7 @@ Context source of truth:
 - If an acceptance criterion is genuinely impossible to satisfy under the given context, stop, do not commit, and emit the failure output described below.
 
 Input contract:
-The input payload is validated by `schemas/engineer_input.schema.json` (enforced by `tools/engineer_contract.validate_engineer_input`). You will receive exactly one object of the form:
+You will receive exactly one object of the form:
 {
   "task": { ...one task node from the EM breakdown tree... },
   "repo": {

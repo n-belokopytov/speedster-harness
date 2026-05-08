@@ -88,51 +88,6 @@ class TestGitClient:
         assert "/" not in branch or branch.startswith("speedster/")
         assert " " not in branch
 
-    def test_get_head_sha(self, git_client: GitClient) -> None:
-        """HEAD SHA should be a 40-character hex string."""
-
-        sha = git_client.get_head_sha()
-        assert len(sha) == 40
-        assert all(c in "0123456789abcdef" for c in sha)
-
-    def test_get_diff_no_changes(self, git_client: GitClient) -> None:
-        """Diff with no changes should return empty string."""
-
-        diff = git_client.get_diff()
-        assert not diff.strip()
-
-    def test_get_diff_with_changes(self, git_client: GitClient) -> None:
-        """Diff with changes should return unified diff."""
-
-        readme = git_client.repo_root / "README.md"
-        readme.write_text(readme.read_text() + "\n# Added line\n")
-        diff = git_client.get_diff()
-        assert "Added line" in diff
-
-    def test_fetch_updates_remote_refs(self, git_client: GitClient, remote_repo: str) -> None:
-        """Fetch should retrieve refs from remote."""
-
-        import subprocess
-
-        work = Path(remote_repo).parent / "work-init"
-        (work / "fetched_file.txt").write_text("fetched\n")
-        subprocess.run(["git", "-C", str(work), "add", "-A"], check=True, capture_output=True)
-        subprocess.run(
-            ["git", "-C", str(work), "commit", "-m", "Add fetched file"],
-            check=True,
-            capture_output=True,
-            env={
-                "GIT_AUTHOR_NAME": "Test",
-                "GIT_AUTHOR_EMAIL": "test@test.com",
-                "GIT_COMMITTER_NAME": "Test",
-                "GIT_COMMITTER_EMAIL": "test@test.com",
-                **__import__("os").environ,
-            },
-        )
-        subprocess.run(["git", "-C", str(work), "push"], check=True, capture_output=True)
-
-        git_client.fetch("origin", git_client.default_branch)
-
 
 class TestGitClientErrors:
     """Tests for GitClient error handling."""

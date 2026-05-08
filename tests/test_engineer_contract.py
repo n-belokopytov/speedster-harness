@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import copy
-import json
-from pathlib import Path
 
 import pytest
 
 from speedster.contracts.engineer_contract import (
     ContractValidationError,
     _validate_output_structural,
-    load_payload,
-    validate_engineer_input,
     validate_engineer_output,
 )
 
@@ -62,24 +58,6 @@ def _needs_context_output() -> dict:
     out["tests_added_or_updated"] = []
     out["requested_context"] = ["pkg/dep.py"]
     return out
-
-
-def _valid_input(branch: str = "speedster/root", task_id: str = "leaf-1") -> dict:
-    return {
-        "task": {
-            "id": task_id,
-            "description": "Implement the task scope.",
-            "acceptance_criteria": {
-                "functional": ["does the thing"],
-            },
-            "context_files": ["pkg/module.py"],
-        },
-        "repo": {
-            "branch": branch,
-            "root": "/workspace/repo",
-        },
-        "prior_feedback": None,
-    }
 
 
 # ---------------- validate_engineer_output: happy paths ----------------
@@ -199,78 +177,6 @@ class TestValidateOutputFailures:
             validate_engineer_output(out)
 
 
-# ---------------- validate_engineer_input: happy paths ----------------
-
-
-class TestValidateInputHappy:
-    def test_null_prior_feedback(self) -> None:
-        validate_engineer_input(_valid_input())
-
-    def test_with_prior_feedback(self) -> None:
-        payload = _valid_input()
-        payload["prior_feedback"] = {
-            "round": 2,
-            "items": ["address criterion #3 with a test"],
-        }
-        validate_engineer_input(payload)
-
-    def test_hyphenated_branch_ok(self) -> None:
-        validate_engineer_input(_valid_input(branch="speedster/iter-1-vertical-slice"))
-
-
-# ---------------- validate_engineer_input: failures ----------------
-
-
-class TestValidateInputFailures:
-    def test_invalid_branch_pattern_rejected(self) -> None:
-        payload = _valid_input()
-        payload["repo"]["branch"] = "feature/foo"
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_legacy_root_id_rejected(self) -> None:
-        payload = _valid_input()
-        payload["root_id"] = "root"
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_legacy_subtask_key_rejected(self) -> None:
-        payload = _valid_input()
-        payload["subtask"] = payload.pop("task")
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_colon_in_branch_rejected(self) -> None:
-        payload = _valid_input()
-        payload["repo"]["branch"] = "speedster/bad:id"
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_prior_feedback_empty_items_rejected(self) -> None:
-        payload = _valid_input()
-        payload["prior_feedback"] = {"round": 1, "items": []}
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_prior_feedback_zero_round_rejected(self) -> None:
-        payload = _valid_input()
-        payload["prior_feedback"] = {"round": 0, "items": ["x"]}
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_missing_context_files_rejected(self) -> None:
-        payload = _valid_input()
-        payload["task"]["context_files"] = []
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-    def test_additional_top_level_property_rejected(self) -> None:
-        payload = _valid_input()
-        payload["extra"] = 1
-        with pytest.raises(Exception):
-            validate_engineer_input(payload)
-
-
 # ---------------- private structural helpers ----------------
 
 
@@ -280,19 +186,3 @@ class TestValidateOutputStructural:
         original = copy.deepcopy(out)
         _validate_output_structural(out)
         assert out == original
-
-
-# ---------------- load_payload ----------------
-
-
-class TestLoadPayload:
-    def test_loads_object(self, tmp_path: Path) -> None:
-        path = tmp_path / "p.json"
-        path.write_text(json.dumps({"a": 1}))
-        assert load_payload(path) == {"a": 1}
-
-    def test_non_object_top_level_raises(self, tmp_path: Path) -> None:
-        path = tmp_path / "bad.json"
-        path.write_text(json.dumps([1, 2]))
-        with pytest.raises(ContractValidationError, match="Top-level JSON"):
-            load_payload(path)

@@ -10,7 +10,7 @@
 #   --phase <name>        Run only one phase
 #   --agents-url <url>    Set all agent URLs to the same value
 #   --skip-docker-start   Skip auto-starting Docker containers
-#   --vllm-url <url>      vLLM base URL (triggers opencode phase)
+#   --url <url>           Model endpoint URL (triggers pi phase)
 #   --skip-validate       Skip the validate phase
 #   --dry-run             Print commands without executing
 #   --help                Show this message
@@ -19,14 +19,14 @@
 # shellcheck source=./setup/lib.sh
 source "$(dirname "$0")/setup/lib.sh"
 
-PHASES=("prerequisites" "venv" "dependencies" "precommit" "directories" "dockercompose" "opencode" "validate")
+PHASES=("prerequisites" "venv" "dependencies" "precommit" "directories" "dockercompose" "pi" "validate")
 
 # --- Defaults ---
 DRY_RUN="${DRY_RUN:-0}"
 SKIP_VALIDATE="${SKIP_VALIDATE:-0}"
 SKIP_DOCKER_START="${SKIP_DOCKER_START:-0}"
 SINGLE_PHASE="${SINGLE_PHASE:-}"
-VLLM_URL="${VLLM_URL:-}"
+URL="${URL:-}"
 AGENTS_URL="${AGENTS_URL:-}"
 
 # --- Usage ---
@@ -43,23 +43,23 @@ Phases (executed in order):
   pre-commit      Install pre-commit hooks
   directories     Ensure state/ and tasks/ directories exist
   dockercompose   Set up Docker Compose with agent URLs (requires docker)
-  opencode        Configure OpenCode with vLLM (requires --vllm-url)
+  pi              Configure PI with model endpoint (requires --url)
   validate        Run pytest to confirm environment is working
 
 Options:
   --phase <name>    Run only one phase (prerequisites|venv|dependencies|
-                     precommit|directories|dockercompose|opencode|validate)
+                      precommit|directories|dockercompose|pi|validate)
   --agents-url <url> Set all agent URLs to the same value
   --skip-docker-start  Skip auto-starting Docker containers
-  --vllm-url <url>  vLLM base URL (triggers opencode phase)
+  --url <url>     Model endpoint URL (triggers pi phase)
   --skip-validate   Skip the validate phase
   --dry-run         Print commands without executing
   --help            Show this message
 
-Environment variables (passed through to opencode-setup.sh):
-  VLLM_API_KEY          API key for vLLM authentication
-  MODEL                 Override automatic model detection
-  AUTO_INSTALL_OPENCODE Set to 0 to disable auto-install
+Environment variables (passed through to pi-setup.sh):
+  API_KEY             API key for the model endpoint
+  MODEL               Override automatic model detection
+  AUTO_INSTALL_PI     Set to 0 to disable auto-install
 
 Examples:
   ./setup.sh                              # Full setup
@@ -99,8 +99,8 @@ parse_args() {
                 SINGLE_PHASE="${SINGLE_PHASE/pre-commit/precommit}"
                 shift 2
                 ;;
-            --vllm-url)
-                VLLM_URL="$2"
+            --url)
+                URL="$2"
                 shift 2
                 ;;
             *)
@@ -127,40 +127,40 @@ parse_args() {
     fi
 }
 
-# --- Phase: opencode (inline, delegates to opencode-setup.sh) ---
-phase_opencode() {
-    step "Configuring OpenCode with vLLM"
+# --- Phase: pi (inline, delegates to pi-setup.sh) ---
+phase_pi() {
+    step "Configuring PI with model endpoint"
 
-    if [[ -z "$VLLM_URL" ]]; then
-        info "No --vllm-url specified, skipping opencode phase"
-        info "To configure: ./setup.sh --vllm-url <vllm_base_url>"
+    if [[ -z "$URL" ]]; then
+        info "No --url specified, skipping pi phase"
+        info "To configure: ./setup.sh --url <endpoint_base_url>"
         return 0
     fi
 
-    local setup_script="${SCRIPT_DIR}/opencode-setup.sh"
+    local setup_script="${SCRIPT_DIR}/pi-setup.sh"
     if [[ ! -f "$setup_script" ]]; then
-        fail "opencode-setup.sh not found at ${setup_script}"
+        fail "pi-setup.sh not found at ${setup_script}"
         return 1
     fi
 
     if [[ ! -x "$setup_script" ]] && [[ "$DRY_RUN" -eq 0 ]]; then
-        echo "  Making opencode-setup.sh executable..."
+        echo "  Making pi-setup.sh executable..."
         chmod +x "$setup_script"
     fi
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        cmd "${setup_script} ${VLLM_URL}"
+        cmd "${setup_script} ${URL}"
         return 0
     fi
 
-    echo "  Delegating to opencode-setup.sh with URL: ${VLLM_URL}"
-    exec bash "$setup_script" "$VLLM_URL"
+    echo "  Delegating to pi-setup.sh with URL: ${URL}"
+    bash "$setup_script" "$URL"
 }
 
 # --- Source all phase scripts ---
 for phase in "${PHASES[@]}"; do
-    # opencode is defined inline above
-    if [[ "$phase" != "opencode" ]]; then
+    # pi is defined inline above
+    if [[ "$phase" != "pi" ]]; then
         local_script="${SCRIPT_DIR}/setup/${phase}.sh"
         if [[ -f "$local_script" ]]; then
             # shellcheck source=setup/prerequisites.sh
@@ -209,8 +209,8 @@ main() {
             :
         else
             failed+=("$phase")
-            if [[ "$phase" == "opencode" ]]; then
-                info "opencode phase would exec opencode-setup.sh"
+            if [[ "$phase" == "pi" ]]; then
+                info "pi phase would exec pi-setup.sh"
             fi
         fi
     done

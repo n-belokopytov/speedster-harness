@@ -50,11 +50,3 @@ phase_venv() {
         return 1
     fi
 }
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    phase_venv
-    exit $?
-fi

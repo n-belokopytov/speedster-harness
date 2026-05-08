@@ -34,11 +34,3 @@ phase_directories() {
 
     [[ "$ok" -eq 0 ]]
 }
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    phase_directories
-    exit $?
-fi

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agent.config import AgentConfig
-from agent.server import AgentServer, Session, WorkRequest, WorkResponse
+from agent.server import AgentServer, GitRequest, WorkRequest, WorkResponse
 
 
 @pytest.fixture
@@ -24,30 +24,34 @@ def system_prompt_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def mock_acp_client():
-    """Return a mock ACPClient instance."""
-
-    mock = MagicMock()
-    mock.process_message.return_value = MagicMock(
-        output=json.dumps({"result": "ok"}),
-        tokens_used=150,
-        latency_ms=200,
-    )
-    return mock
+def cli_server(tmp_path):
+    config = AgentConfig(role="engineer", model="default", host="127.0.0.1",
+                         port=9999, repo_root=str(tmp_path), mock_mode=True)
+    server = AgentServer(config)
+    server._mock_mode = False
+    server._system_prompt = "You are a test agent."
+    server._workspace_root = tmp_path
+    server._timeout_seconds = 10
+    server._git_ssh_key = None
+    return server
 
 
 @pytest.fixture
-def agent_server_nonmock(system_prompt_path: Path, mock_acp_client: MagicMock):
-    """Create an AgentServer in non-mock mode with a mocked ACPClient."""
+def agent_server_nonmock(system_prompt_path: Path):
+    """Create an AgentServer in non-mock mode with mocked GitClient."""
 
-    with patch("agent.server.ACPClient", return_value=mock_acp_client):
+    mock_git = MagicMock()
+
+    with patch("agent.server.GitClient", return_value=mock_git):
         config = AgentConfig(
             role="engineer",
-            model="vllm/test",
+            model="default",
             host="127.0.0.1",
             port=9999,
             repo_root=str(system_prompt_path),
             mock_mode=False,
+            git_ssh_key="/run/secrets/github_ssh_key",
+            repo_url="git@github.com:test/repo.git",
         )
         server = AgentServer(config)
         yield server
@@ -59,7 +63,7 @@ def agent_server_mock(system_prompt_path: Path):
 
     config = AgentConfig(
         role="engineer",
-        model="vllm/test",
+        model="default",
         host="127.0.0.1",
         port=9999,
         repo_root=str(system_prompt_path),
@@ -69,149 +73,316 @@ def agent_server_mock(system_prompt_path: Path):
     yield server
 
 
+# --- Tests migrated from test_agent_client.py ---
+
+
+class TestAgentClientHappyPath:
+    """Test successful PI CLI invocation."""
+
+    def test_returns_output_correctly(self, cli_server: AgentServer) -> None:
+        """Happy path: subprocess returns output, result is returned."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Here is the agent output\n"
+        mock_result.stderr = ""
+
+        with patch("agent.server.subprocess.run", return_value=mock_result):
+            response = cli_server._process_message_via_cli("test message")
+
+        assert response == "Here is the agent output"
+
+    def test_system_prompt_and_message_in_command_args(
+        self, cli_server: AgentServer
+    ) -> None:
+        """The pi command includes --append-system-prompt and the message."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.server.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            cli_server._process_message_via_cli("hello world")
+
+        call_args = mock_run.call_args.args[0]
+        assert "pi" in call_args
+        assert "-p" in call_args
+        assert "--no-session" in call_args
+        assert "--model" in call_args
+        assert "default" in call_args
+        assert "--append-system-prompt" in call_args
+        assert "You are a test agent." in call_args
+        assert "hello world" in call_args
+
+
+class TestAgentClientTimeout:
+    """Test timeout handling."""
+
+    def test_timeout_raises_runtime_error(
+        self, cli_server: AgentServer
+    ) -> None:
+        """subprocess.TimeoutExpired raises RuntimeError."""
+        with patch("agent.server.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd=["pi"], timeout=10
+            )
+            with pytest.raises(RuntimeError, match="timed out"):
+                cli_server._process_message_via_cli("test")
+
+
+class TestAgentClientNotFound:
+    """Test CLI not found handling."""
+
+    def test_cli_not_found_raises_runtime_error(
+        self, cli_server: AgentServer
+    ) -> None:
+        """FileNotFoundError raises RuntimeError with helpful message."""
+        with patch("agent.server.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+            with pytest.raises(RuntimeError, match="pi CLI not found"):
+                cli_server._process_message_via_cli("test")
+
+
+class TestAgentClientGitSSHKey:
+    """Test GIT_SSH_COMMAND env injection."""
+
+    def test_git_ssh_key_set_in_env(self, tmp_path: Path) -> None:
+        """GIT_SSH_COMMAND is set in subprocess env when git_ssh_key is provided."""
+        config = AgentConfig(
+            role="engineer",
+            model="default",
+            host="127.0.0.1",
+            port=9999,
+            repo_root=str(tmp_path),
+            mock_mode=True,
+        )
+        server = AgentServer(config)
+        server._mock_mode = False
+        server._system_prompt = "You are a test agent."
+        server._workspace_root = tmp_path
+        server._timeout_seconds = 10
+        server._git_ssh_key = "/run/secrets/github_ssh_key"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.server.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            server._process_message_via_cli("test")
+
+        env = mock_run.call_args.kwargs["env"]
+        assert "GIT_SSH_COMMAND" in env
+        assert "/run/secrets/github_ssh_key" in env["GIT_SSH_COMMAND"]
+        assert "StrictHostKeyChecking=no" in env["GIT_SSH_COMMAND"]
+
+    def test_git_ssh_key_absent_not_in_env(self, cli_server: AgentServer) -> None:
+        """GIT_SSH_COMMAND is not set in env when git_ssh_key is None."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "OK\n"
+        mock_result.stderr = ""
+
+        with patch("agent.server.subprocess.run") as mock_run:
+            mock_run.return_value = mock_result
+            cli_server._process_message_via_cli("test")
+
+        env = mock_run.call_args.kwargs["env"]
+        git_cmd = env.get("GIT_SSH_COMMAND")
+        assert not git_cmd or "github" not in git_cmd
+
+
+class TestAgentClientEmptyOutput:
+    """Test empty output handling."""
+
+    def test_empty_output_raises_runtime_error(
+        self, cli_server: AgentServer
+    ) -> None:
+        """Empty stdout raises RuntimeError."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "   \n"
+        mock_result.stderr = ""
+
+        with patch("agent.server.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="empty output"):
+                cli_server._process_message_via_cli("test")
+
+
+class TestAgentClientProcessError:
+    """Test non-zero exit code handling."""
+
+    def test_nonzero_exit_raises_runtime_error(
+        self, cli_server: AgentServer
+    ) -> None:
+        """Non-zero return code raises RuntimeError with stderr."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "something went wrong"
+
+        with patch("agent.server.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="exited with code 1"):
+                cli_server._process_message_via_cli("test")
+
+
+class TestAgentClientValidation:
+    """Test input validation."""
+
+    def test_empty_message_raises_value_error(
+        self, cli_server: AgentServer
+    ) -> None:
+        """Empty message raises ValueError."""
+        with pytest.raises(ValueError, match="required"):
+            cli_server._process_message_via_cli("   ")
+
+    def test_empty_system_prompt_raises_value_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty system_prompt raises ValueError."""
+        config = AgentConfig(
+            role="engineer",
+            model="default",
+            host="127.0.0.1",
+            port=9999,
+            repo_root=str(tmp_path),
+            mock_mode=True,
+        )
+        server = AgentServer(config)
+        server._mock_mode = False
+        server._system_prompt = ""
+        server._workspace_root = tmp_path
+        server._timeout_seconds = 10
+        server._git_ssh_key = None
+
+        with pytest.raises(ValueError, match="required"):
+            server._process_message_via_cli("test message")
+
+
+class TestSubprocessCwd:
+    def test_subprocess_cwd_is_workspace_root(self, cli_server: AgentServer) -> None:
+        mock_result = MagicMock(returncode=0, stdout="OK\n", stderr="")
+        with patch("agent.server.subprocess.run", return_value=mock_result) as mock_run:
+            cli_server._process_message_via_cli("test")
+        assert mock_run.call_args.kwargs["cwd"] == str(cli_server._workspace_root)
+
+
+class TestHealthCheck:
+    def test_health_check_returns_ok(self, agent_server_mock: AgentServer) -> None:
+        resp = agent_server_mock.health_check()
+        assert resp.status == "ok"
+        assert resp.model == "default"
+
+
 class TestProcessMessageNonMock:
-    """Test _process_message delegates to ACPClient in non-mock mode."""
+    """Test _process_message delegates to _process_message_via_cli in non-mock mode."""
 
-    def test_acp_client_called(self, agent_server_nonmock: AgentServer, mock_acp_client: MagicMock) -> None:
-        """ACPClient.process_message is called with the user message."""
-
-        session = Session(
-            session_id="test-session",
-            role="engineer",
-            model="vllm/test",
-            created_at=0.0,
-            last_activity=0.0,
-        )
-
-        import asyncio
-
-        asyncio.run(agent_server_nonmock._process_message(session, "test message"))
-
-        mock_acp_client.process_message.assert_called_once_with("test message")
-
-    def test_tokens_used_propagates_to_session(
-        self, agent_server_nonmock: AgentServer, mock_acp_client: MagicMock
+    def test_agent_client_called(
+        self, agent_server_nonmock: AgentServer
     ) -> None:
-        """tokens_used from ACPResponse is stored on the session."""
-
-        session = Session(
-            session_id="test-session",
-            role="engineer",
-            model="vllm/test",
-            created_at=0.0,
-            last_activity=0.0,
-        )
+        """_process_message_via_cli is called with the user message."""
 
         import asyncio
 
-        asyncio.run(agent_server_nonmock._process_message(session, "test message"))
+        with patch.object(
+            agent_server_nonmock,
+            "_process_message_via_cli",
+            return_value='{"result": "ok"}',
+        ) as mock_method:
+            asyncio.run(agent_server_nonmock._process_message("test message"))
 
-        assert session._last_tokens == 150
+        mock_method.assert_called_once_with("test message")
 
-    def test_latency_propagates_to_session(
-        self, agent_server_nonmock: AgentServer, mock_acp_client: MagicMock
+    def test_work_response_includes_session_id(
+        self, agent_server_nonmock: AgentServer
     ) -> None:
-        """latency_ms from ACPResponse is stored on the session."""
-
-        session = Session(
-            session_id="test-session",
-            role="engineer",
-            model="vllm/test",
-            created_at=0.0,
-            last_activity=0.0,
-        )
+        """WorkResponse carries a valid session_id."""
 
         import asyncio
 
-        asyncio.run(agent_server_nonmock._process_message(session, "test message"))
+        with patch.object(
+            agent_server_nonmock,
+            "_process_message_via_cli",
+            return_value='{"result": "ok"}',
+        ):
+            request = WorkRequest(
+                task_id="test-001",
+                description="Test message",
+            )
 
-        assert session._last_latency == 200
-
-    def test_work_response_includes_tokens_and_latency(
-        self, agent_server_nonmock: AgentServer, mock_acp_client: MagicMock
-    ) -> None:
-        """WorkResponse carries tokens_used and latency_ms from ACPClient."""
-
-        request = WorkRequest(
-            task_id="test-001",
-            description="Test message",
-        )
-
-        import asyncio
-
-        response = asyncio.run(agent_server_nonmock.handle_work(request))
+            response = asyncio.run(agent_server_nonmock.handle_work(request))
 
         assert isinstance(response, WorkResponse)
-        assert response.tokens_used == 150
-        assert response.latency_ms >= 0
+        assert response.session_id is not None
+        assert len(response.session_id) > 0
 
-    def test_acp_client_none_raises_runtime_error(
+    def test_agent_client_none_raises_runtime_error(
         self, system_prompt_path: Path
     ) -> None:
-        """If _acp_client is None in non-mock mode, RuntimeError is raised."""
+        """If _system_prompt is empty in non-mock mode, RuntimeError is raised."""
 
         config = AgentConfig(
             role="engineer",
-            model="vllm/test",
+            model="default",
             host="127.0.0.1",
             port=9999,
             repo_root=str(system_prompt_path),
-            mock_mode=False,
+            mock_mode=True,
         )
         server = AgentServer(config)
-        server._acp_client = None
-
-        session = Session(
-            session_id="test-session",
-            role="engineer",
-            model="vllm/test",
-            created_at=0.0,
-            last_activity=0.0,
-        )
+        server._mock_mode = False
+        server._system_prompt = ""
 
         import asyncio
 
-        with pytest.raises(RuntimeError, match="ACPClient not initialized"):
-            asyncio.run(server._process_message(session, "test"))
+        with pytest.raises(RuntimeError, match="AgentClient not initialized"):
+            asyncio.run(server._process_message("test"))
 
 
 class TestHTTP500ErrorPropagation:
-    """Test that /work returns 500 when ACPClient raises."""
+    """Test that /work returns 500 when _process_message_via_cli raises."""
 
-    def test_work_endpoint_returns_500_on_acp_error(
+    def test_work_endpoint_returns_500_on_agent_error(
         self, system_prompt_path: Path
     ) -> None:
-        """When ACPClient.process_message raises RuntimeError, /work returns 500."""
+        """When _process_message_via_cli raises RuntimeError, /work returns 500."""
 
-        mock_client = MagicMock()
-        mock_client.process_message.side_effect = RuntimeError("model unreachable")
-
-        with patch("agent.server.ACPClient", return_value=mock_client):
-            config = AgentConfig(
-                role="engineer",
-                model="vllm/test",
-                host="127.0.0.1",
-                port=9999,
-                repo_root=str(system_prompt_path),
-                mock_mode=False,
-            )
-            server = AgentServer(config)
-
-        import asyncio
-
-        request = WorkRequest(
-            task_id="test-001",
-            description="Test message",
+        config = AgentConfig(
+            role="engineer",
+            model="default",
+            host="127.0.0.1",
+            port=9999,
+            repo_root=str(system_prompt_path),
+            mock_mode=True,
         )
+        server = AgentServer(config)
+        server._mock_mode = False
+        server._system_prompt = "You are a test agent."
+        server._workspace_root = system_prompt_path
+        server._timeout_seconds = 10
+        server._git_ssh_key = None
 
-        with pytest.raises(Exception) as exc_info:
-            asyncio.run(server.handle_work(request))
+        with patch.object(
+            server,
+            "_process_message_via_cli",
+            side_effect=RuntimeError("model unreachable"),
+        ):
+            import asyncio
 
-        from fastapi import HTTPException
+            request = WorkRequest(
+                task_id="test-001",
+                description="Test message",
+            )
 
-        assert isinstance(exc_info.value, HTTPException)
-        assert exc_info.value.status_code == 500
-        assert "model unreachable" in str(exc_info.value.detail)
+            with pytest.raises(Exception) as exc_info:
+                asyncio.run(server.handle_work(request))
+
+            from fastapi import HTTPException
+
+            assert isinstance(exc_info.value, HTTPException)
+            assert exc_info.value.status_code == 500
+            assert "model unreachable" in str(exc_info.value.detail)
 
 
 class TestMockModeEnvVariable:
@@ -266,13 +437,11 @@ class TestServerGitClient:
 
         for role in ("em", "engineer", "qa"):
             mock_git = MagicMock()
-            mock_acp = MagicMock()
 
-            with patch("agent.server.ACPClient", return_value=mock_acp), \
-                 patch("agent.server.GitClient", return_value=mock_git) as MockGitClient:
+            with patch("agent.server.GitClient", return_value=mock_git) as MockGitClient:
                 config = AgentConfig(
                     role=role,
-                    model="vllm/test",
+                    model="default",
                     host="127.0.0.1",
                     port=9999,
                     repo_root=str(system_prompt_path),
@@ -294,13 +463,11 @@ class TestServerGitClient:
         """GitClient.clone() is called during AgentServer.__init__."""
 
         mock_git = MagicMock()
-        mock_acp = MagicMock()
 
-        with patch("agent.server.ACPClient", return_value=mock_acp), \
-             patch("agent.server.GitClient", return_value=mock_git):
+        with patch("agent.server.GitClient", return_value=mock_git):
             config = AgentConfig(
                 role="engineer",
-                model="vllm/test",
+                model="default",
                 host="127.0.0.1",
                 port=9999,
                 repo_root=str(system_prompt_path),
@@ -312,20 +479,18 @@ class TestServerGitClient:
 
             mock_git.clone.assert_called_once()
 
-    def test_acp_workspace_root_is_cloned_repo_all_roles(
+    def test_agent_workspace_root_is_cloned_repo_all_roles(
         self, system_prompt_path: Path
     ) -> None:
-        """ACPClient workspace_root points to cloned repo for all roles."""
+        """Workspace_root points to cloned repo for all roles."""
 
         for role in ("em", "engineer", "qa"):
             mock_git = MagicMock()
-            mock_acp = MagicMock()
 
-            with patch("agent.server.ACPClient", return_value=mock_acp) as MockACP, \
-                 patch("agent.server.GitClient", return_value=mock_git):
+            with patch("agent.server.GitClient", return_value=mock_git):
                 config = AgentConfig(
                     role=role,
-                    model="vllm/test",
+                    model="default",
                     host="127.0.0.1",
                     port=9999,
                     repo_root=str(system_prompt_path),
@@ -333,48 +498,38 @@ class TestServerGitClient:
                     git_ssh_key="/run/secrets/github_ssh_key",
                     repo_url="git@github.com:test/repo.git",
                 )
-                AgentServer(config)
+                server = AgentServer(config)
 
-                call_kwargs = MockACP.call_args.kwargs
-                assert str(call_kwargs["workspace_root"]) == str(system_prompt_path / "repo")
+                assert str(server._workspace_root) == str(system_prompt_path / "repo")
 
-    def test_acp_workspace_root_is_repo_root_without_git(
+    def test_agent_workspace_root_is_repo_root_without_git(
         self, system_prompt_path: Path
     ) -> None:
-        """ACPClient workspace_root stays as repo_root when no SSH key or repo URL."""
+        """Workspace_root stays as repo_root when no SSH key or repo URL."""
 
-        mock_acp = MagicMock()
-
-        with patch("agent.server.ACPClient", return_value=mock_acp) as MockACP, \
-             patch("agent.server.GitClient") as MockGitClient:
+        with patch("agent.server.GitClient") as MockGitClient:
             config = AgentConfig(
                 role="em",
-                model="vllm/test",
+                model="default",
                 host="127.0.0.1",
                 port=9999,
                 repo_root=str(system_prompt_path),
                 mock_mode=False,
             )
-            AgentServer(config)
+            server = AgentServer(config)
 
-            call_kwargs = MockACP.call_args.kwargs
-            assert str(call_kwargs["workspace_root"]) == str(system_prompt_path)
+            assert str(server._workspace_root) == str(system_prompt_path)
             MockGitClient.assert_not_called()
-
-
 
     def test_git_client_not_created_without_ssh_key(
         self, system_prompt_path: Path
     ) -> None:
         """GitClient is NOT created when git_ssh_key is not configured."""
 
-        mock_acp = MagicMock()
-
-        with patch("agent.server.ACPClient", return_value=mock_acp), \
-             patch("agent.server.GitClient") as MockGitClient:
+        with patch("agent.server.GitClient") as MockGitClient:
             config = AgentConfig(
                 role="engineer",
-                model="vllm/test",
+                model="default",
                 host="127.0.0.1",
                 port=9999,
                 repo_root=str(system_prompt_path),
@@ -389,13 +544,10 @@ class TestServerGitClient:
     ) -> None:
         """GitClient is NOT created when repo_url is not configured."""
 
-        mock_acp = MagicMock()
-
-        with patch("agent.server.ACPClient", return_value=mock_acp), \
-             patch("agent.server.GitClient") as MockGitClient:
+        with patch("agent.server.GitClient") as MockGitClient:
             config = AgentConfig(
                 role="engineer",
-                model="vllm/test",
+                model="default",
                 host="127.0.0.1",
                 port=9999,
                 repo_root=str(system_prompt_path),
@@ -414,7 +566,7 @@ class TestServerGitClient:
         with patch("agent.server.GitClient") as MockGitClient:
             config = AgentConfig(
                 role="engineer",
-                model="vllm/test",
+                model="default",
                 host="127.0.0.1",
                 port=9999,
                 repo_root=str(system_prompt_path),
@@ -425,3 +577,34 @@ class TestServerGitClient:
             AgentServer(config)
 
             MockGitClient.assert_not_called()
+
+
+class TestGitEndpoint:
+    async def test_git_merge_success(self, agent_server_nonmock):
+        server = agent_server_nonmock
+        with patch.object(server._git_client, 'fetch'), \
+             patch.object(server._git_client, 'checkout'), \
+             patch.object(server._git_client, 'merge', return_value="abc123def456"), \
+             patch.object(server._git_client, 'push'):
+            result = await server.handle_git(
+                GitRequest(action="merge", branch="feature", default_branch="main", message="test merge")
+            )
+        assert result.action == "merge"
+        assert result.sha == "abc123def456"
+        assert result.error is None
+
+    async def test_git_merge_client_not_initialized(self, agent_server_mock):
+        server = agent_server_mock
+        result = await server.handle_git(
+            GitRequest(action="merge", branch="feature")
+        )
+        assert result.error is not None
+        assert "not initialized" in result.error
+
+    async def test_git_unknown_action(self, agent_server_mock):
+        server = agent_server_mock
+        result = await server.handle_git(
+            GitRequest(action="rebase", branch="feature")
+        )
+        assert result.error is not None
+        assert "Unknown action" in result.error

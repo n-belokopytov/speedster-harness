@@ -1,8 +1,0 @@
-{
-  "id": "task-001",
-  "status": "pending",
-  "description": "Add user authentication endpoint with JWT tokens",
-  "priority": "high",
-  "created_at": "2025-01-15T10:00:00Z",
-  "model_override": null
-}
