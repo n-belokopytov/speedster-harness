@@ -69,8 +69,10 @@ if [[ ! "${MODEL}" =~ ^[a-zA-Z0-9/_.@:-]+$ ]]; then
 fi
 
 # Write config to a given directory
+# Usage: write_config_dir <target_dir> [api_key]
 write_config_dir() {
   local target_dir="$1"
+  local write_api_key="${2:-}"
   local models_path="${target_dir}/models.json"
   local settings_path="${target_dir}/settings.json"
 
@@ -88,7 +90,7 @@ write_config_dir() {
 
   # Generate models.json (OpenAI-compatible format)
   TEMP_MODELS="$(mktemp)"
-  python3 - "$ENDPOINT_URL" "$MODEL" "$API_KEY" <<'PY' > "${TEMP_MODELS}"
+  python3 - "$ENDPOINT_URL" "$MODEL" "$write_api_key" <<'PY' > "${TEMP_MODELS}"
 import json, sys
 import re
 
@@ -144,14 +146,14 @@ EOF
   echo "==> Wrote settings.json to ${settings_path}"
 }
 
-# Write config to home directory
+# Write config to home directory (no API key; host doesn't need it)
 write_config_dir "${PI_CONFIG_DIR}"
 
-# Also write to repo-local directory for Docker mounting
+# Also write to repo-local directory for Docker mounting (with API key)
 if [[ -n "${REPO_PI_CONFIG_DIR}" ]]; then
   echo
   echo "==> Writing repo-local config for Docker containers to ${REPO_PI_CONFIG_DIR}"
-  write_config_dir "${REPO_PI_CONFIG_DIR}"
+  write_config_dir "${REPO_PI_CONFIG_DIR}" "${API_KEY}"
 fi
 
 # Install PI if needed
@@ -170,10 +172,8 @@ echo
 echo "==> PI configured with model: ${MODEL}"
 echo "==> Models config: ${PI_CONFIG_DIR}/models.json"
 echo "==> Settings: ${PI_CONFIG_DIR}/settings.json"
-if [[ -n "${API_KEY}" ]]; then
-  echo "==> API key: persisted in models.json (options.apiKey)"
-fi
 if [[ -n "${REPO_PI_CONFIG_DIR}" ]]; then
-  echo "==> Repo-local config: ${REPO_PI_CONFIG_DIR}/ (for Docker mounting)"
+  echo "==> Repo-local config: ${REPO_PI_CONFIG_DIR}/ (for Docker containers)"
+  [[ -n "${API_KEY}" ]] && echo "==> API key: included in repo-local models.json for agent containers"
 fi
 echo

@@ -13,6 +13,7 @@ services:
       PORT: 8080
       REPO_ROOT: /workspace
       PI_CONFIG_DIR: /root/.pi/agent
+      PI_API_KEY: ${PI_API_KEY:-}
     ports:
       - "${EM_AGENT_PORT:-8081}:8080"
     volumes:
@@ -36,6 +37,7 @@ services:
       GIT_SSH_KEY: /run/secrets/github_ssh_key
       REPO_URL: ${REPO_URL:-}
       PI_CONFIG_DIR: /root/.pi/agent
+      PI_API_KEY: ${PI_API_KEY:-}
     ports:
       - "${ENG_AGENT_PORT:-8082}:8080"
     volumes:
@@ -58,6 +60,7 @@ services:
       PORT: 8080
       REPO_ROOT: /workspace
       PI_CONFIG_DIR: /root/.pi/agent
+      PI_API_KEY: ${PI_API_KEY:-}
     ports:
       - "${QA_AGENT_PORT:-8083}:8080"
     volumes:
@@ -78,9 +81,9 @@ services:
       REPO_DEFAULT_BRANCH: ${REPO_DEFAULT_BRANCH:-main}
       MAX_QA_ROUNDS: ${MAX_QA_ROUNDS:-}
     volumes:
-      - ./:/workspace
       - ./state:/app/state
+      - ./tasks:/app/tasks
       - ${SSH_KEY_PATH:-~/.ssh/id_speedster}:/run/secrets/github_ssh_key:ro
-    working_dir: /workspace
+    working_dir: /app
     depends_on: [em-agent, engineer-agent, qa-agent]
     restart: unless-stopped
