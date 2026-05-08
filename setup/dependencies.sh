@@ -24,13 +24,5 @@ phase_dependencies() {
     else
         fail "Dependency installation failed"
         return 1
-    fi
-}
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    phase_dependencies
-    exit $?
-fi
+   fi
+ }

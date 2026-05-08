@@ -30,12 +30,3 @@ phase_validate() {
         return 1
     fi
 }
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    SKIP_VALIDATE="${SKIP_VALIDATE:-0}"
-    phase_validate
-    exit $?
-fi

@@ -144,25 +144,4 @@ phase_dockercompose() {
         fail "Failed to start agent containers"
         return 1
     fi
-}
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    SKIP_DOCKER_START="${SKIP_DOCKER_START:-0}"
-    AGENTS_URL="${AGENTS_URL:-}"
-
-    # Parse args for standalone mode
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --agents-url) AGENTS_URL="$2"; shift 2 ;;
-            --skip-docker-start) SKIP_DOCKER_START=1; shift ;;
-            --dry-run) DRY_RUN=1; shift ;;
-            *) shift ;;
-        esac
-    done
-
-    phase_dockercompose
-    exit $?
-fi
+ }

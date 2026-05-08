@@ -62,13 +62,5 @@ phase_precommit() {
     else
         warn "Skipping: not in a git repository"
         return 0
-    fi
-}
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    DRY_RUN="${DRY_RUN:-0}"
-    phase_precommit
-    exit $?
-fi
+   fi
+ }

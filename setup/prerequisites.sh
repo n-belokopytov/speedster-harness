@@ -57,10 +57,3 @@ phase_prerequisites() {
 
     [[ "$missing" -eq 0 ]]
 }
-
-# Standalone execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    source "$(dirname "$0")/lib.sh"
-    phase_prerequisites
-    exit $?
-fi
