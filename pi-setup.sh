@@ -8,6 +8,7 @@ set -euo pipefail
 #   API_KEY=your-key              # optional; API key for the endpoint
 #   MODEL=exact/model/id          # optional; auto-detected from /models if omitted
 #   AUTO_INSTALL_PI=1             # set to 0 to disable auto-install
+#   PI_CONFIG_DIR=/path           # optional; overrides default config location ($HOME/.pi/agent)
 
 ENDPOINT_URL="${1:?Usage: $0 <endpoint_url>}"
 API_KEY="${API_KEY:-}"
@@ -16,8 +17,12 @@ MODEL="${MODEL:-}"
 
 # Config paths
 PI_CONFIG_DIR="${PI_CONFIG_DIR:-$HOME/.pi/agent}"
-PI_MODELS_PATH="${PI_CONFIG_DIR}/models.json"
-PI_SETTINGS_PATH="${PI_CONFIG_DIR}/settings.json"
+
+# Detect repo root and set up secondary config directory for Docker
+REPO_PI_CONFIG_DIR=""
+if [[ -f "$(pwd)/docker-compose.yml" ]]; then
+  REPO_PI_CONFIG_DIR="$(pwd)/.pi/agent"
+fi
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: required command not found: $1" >&2; exit 1; }
@@ -63,39 +68,48 @@ if [[ ! "${MODEL}" =~ ^[a-zA-Z0-9/_.@:-]+$ ]]; then
   exit 1
 fi
 
-# Create config directory with secure permissions
-mkdir -p "${PI_CONFIG_DIR}"
-chmod 700 "${PI_CONFIG_DIR}"
+# Write config to a given directory
+write_config_dir() {
+  local target_dir="$1"
+  local models_path="${target_dir}/models.json"
+  local settings_path="${target_dir}/settings.json"
 
-# Backup existing models config
-if [[ -f "${PI_MODELS_PATH}" ]]; then
-  BACKUP_PATH="${PI_MODELS_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
-  cp "${PI_MODELS_PATH}" "${BACKUP_PATH}"
-  chmod 600 "${BACKUP_PATH}"
-  echo "==> Existing models.json backed up to ${BACKUP_PATH}"
-fi
+  # Create config directory with secure permissions
+  mkdir -p "${target_dir}"
+  chmod 700 "${target_dir}"
 
-# Generate models.json (OpenAI-compatible format)
-TEMP_MODELS="$(mktemp)"
-python3 - "$ENDPOINT_URL" "$MODEL" <<'PY' > "${TEMP_MODELS}"
+  # Backup existing models config
+  if [[ -f "${models_path}" ]]; then
+    BACKUP_PATH="${models_path}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp "${models_path}" "${BACKUP_PATH}"
+    chmod 600 "${BACKUP_PATH}"
+    echo "==> Existing models.json backed up to ${BACKUP_PATH}"
+  fi
+
+  # Generate models.json (OpenAI-compatible format)
+  TEMP_MODELS="$(mktemp)"
+  python3 - "$ENDPOINT_URL" "$MODEL" "$API_KEY" <<'PY' > "${TEMP_MODELS}"
 import json, sys
+import re
 
 endpoint_url = sys.argv[1]
 model_id = sys.argv[2]
+api_key = sys.argv[3] if len(sys.argv) > 3 else ""
 
 # Strip trailing /vN if present to get the base URL for the provider
 base_url = endpoint_url.rstrip("/")
 # If it ends with /v1, /v2, etc., strip it to get the true base
-import re
 base_url = re.sub(r"/v\d+$", "", base_url)
+
+options = {"baseURL": base_url + "/"}
+if api_key:
+    options["apiKey"] = api_key
 
 config = {
     "provider": {
         "openai": {
             "name": "OpenAI Compatible",
-            "options": {
-                "baseURL": base_url + "/",
-            },
+            "options": options,
             "models": {
                 model_id: {
                     "name": model_id,
@@ -108,12 +122,12 @@ config = {
 print(json.dumps(config, indent=2))
 PY
 
-chmod 600 "${TEMP_MODELS}"
-mv "${TEMP_MODELS}" "${PI_MODELS_PATH}"
+  chmod 600 "${TEMP_MODELS}"
+  mv "${TEMP_MODELS}" "${models_path}"
 
-# Generate settings.json
-TEMP_SETTINGS="$(mktemp)"
-cat > "${TEMP_SETTINGS}" <<EOF
+  # Generate settings.json
+  TEMP_SETTINGS="$(mktemp)"
+  cat > "${TEMP_SETTINGS}" <<EOF
 {
   "model": "${MODEL}",
   "permission": {
@@ -123,11 +137,22 @@ cat > "${TEMP_SETTINGS}" <<EOF
   }
 }
 EOF
-chmod 600 "${TEMP_SETTINGS}"
-mv "${TEMP_SETTINGS}" "${PI_SETTINGS_PATH}"
+  chmod 600 "${TEMP_SETTINGS}"
+  mv "${TEMP_SETTINGS}" "${settings_path}"
 
-echo "==> Wrote models.json to ${PI_MODELS_PATH}"
-echo "==> Wrote settings.json to ${PI_SETTINGS_PATH}"
+  echo "==> Wrote models.json to ${models_path}"
+  echo "==> Wrote settings.json to ${settings_path}"
+}
+
+# Write config to home directory
+write_config_dir "${PI_CONFIG_DIR}"
+
+# Also write to repo-local directory for Docker mounting
+if [[ -n "${REPO_PI_CONFIG_DIR}" ]]; then
+  echo
+  echo "==> Writing repo-local config for Docker containers to ${REPO_PI_CONFIG_DIR}"
+  write_config_dir "${REPO_PI_CONFIG_DIR}"
+fi
 
 # Install PI if needed
 if ! command -v pi >/dev/null 2>&1; then
@@ -141,12 +166,14 @@ if ! command -v pi >/dev/null 2>&1; then
   fi
 fi
 
-# Export API key for PI to use
-[[ -n "${API_KEY}" ]] && export PI_API_KEY="${API_KEY}"
-
 echo
 echo "==> PI configured with model: ${MODEL}"
-echo "==> Models config: ${PI_MODELS_PATH}"
-echo "==> Settings: ${PI_SETTINGS_PATH}"
-[[ -n "${API_KEY}" ]] && echo "==> API key: via environment variable"
+echo "==> Models config: ${PI_CONFIG_DIR}/models.json"
+echo "==> Settings: ${PI_CONFIG_DIR}/settings.json"
+if [[ -n "${API_KEY}" ]]; then
+  echo "==> API key: persisted in models.json (options.apiKey)"
+fi
+if [[ -n "${REPO_PI_CONFIG_DIR}" ]]; then
+  echo "==> Repo-local config: ${REPO_PI_CONFIG_DIR}/ (for Docker mounting)"
+fi
 echo
