@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck opencode-setup.sh setup.sh setup/lib.sh setup/prerequisites.sh setup/dependencies.sh setup/directories.sh setup/venv.sh setup/precommit.sh setup/validate.sh setup/dockercompose.sh
+          shellcheck opencode-setup.sh pi-setup.sh setup.sh setup/*.sh
 
   test:
     runs-on: ubuntu-latest
