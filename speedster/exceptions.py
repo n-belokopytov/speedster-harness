@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 
-class SpeedsterError(Exception):
-    """Base exception for all speedster errors."""
-
-
-class ValidationError(SpeedsterError):
+class ValidationError(Exception):
     """Raised when agent output fails validation."""
 
 

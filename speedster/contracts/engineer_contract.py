@@ -1,23 +1,13 @@
 """Engineer agent contract helpers.
 
-Single source of truth for validating the JSON payloads that flow
-between the orchestrator and the Engineer agent:
-
-- `validate_engineer_output` : agent -> orchestrator response.
-- `validate_engineer_input`  : orchestrator -> agent request.
-
-Output validation performs JSON Schema checks plus the structural checks
-JSON Schema cannot express (status-conditional field requirements). Input
-validation is currently pure JSON Schema; no cross-field invariants remain
-beyond what the schema expresses.
-
-The CLIs in `tools/validate_engineer_output.py` and
-`tools/validate_engineer_input.py` wrap these functions.
+Validates the JSON payload that the Engineer agent returns to the
+orchestrator (`validate_engineer_output`). Performs JSON Schema checks
+plus structural checks JSON Schema cannot express (status-conditional
+field requirements).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +15,6 @@ from speedster.contracts.json_schema import validate_json_schema
 
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 DEFAULT_OUTPUT_SCHEMA_PATH = _SCHEMAS_DIR / "engineer_output.schema.json"
-DEFAULT_INPUT_SCHEMA_PATH = _SCHEMAS_DIR / "engineer_input.schema.json"
 
 
 class ContractValidationError(ValueError):
@@ -90,19 +79,3 @@ def validate_engineer_output(
     """Validate an Engineer output payload end-to-end."""
     validate_json_schema(payload, schema_path or DEFAULT_OUTPUT_SCHEMA_PATH)
     _validate_output_structural(payload)
-
-
-def validate_engineer_input(
-    payload: dict[str, Any],
-    schema_path: Path | None = None,
-) -> None:
-    """Validate an Engineer input payload against the JSON Schema."""
-    validate_json_schema(payload, schema_path or DEFAULT_INPUT_SCHEMA_PATH)
-
-
-def load_payload(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ContractValidationError("Top-level JSON value must be an object.")
-    return data

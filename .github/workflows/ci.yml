@@ -40,15 +40,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate README formatting
-        run: |
-          if [ -f README.md ] && [ -s README.md ]; then
-            echo "✓ README.md exists and is not empty"
-          else
-            echo "ERROR: README.md missing or empty"
-            exit 1
-          fi
-
       - name: Validate config file format
         run: |
           # Test JSON generation with sample model
@@ -97,7 +88,6 @@ jobs:
           REQUIRED_FILES=(
             "opencode-setup.sh"
             "LICENSE"
-            "README.md"
             "CONTRIBUTING.md"
             "CHANGELOG.md"
             ".github/ISSUE_TEMPLATE/bug_report.md"

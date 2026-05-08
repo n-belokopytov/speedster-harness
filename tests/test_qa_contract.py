@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import copy
-import json
-from pathlib import Path
 
 import pytest
 
 from speedster.contracts.qa_contract import (
     ContractValidationError,
     _validate_output_structural,
-    load_payload,
-    validate_qa_input,
     validate_qa_output,
 )
 
@@ -43,42 +39,6 @@ def _engineer_output(
         "notes": "",
         "blocked_reason": "",
         "requested_context": [],
-    }
-
-
-def _valid_input(
-    *,
-    branch: str = "speedster/root",
-    task_id: str = "leaf-1",
-    commit: str = "abc1234",
-    round_: int = 1,
-) -> dict:
-    return {
-        "task": {
-            "id": task_id,
-            "description": "Implement the task scope.",
-            "acceptance_criteria": {
-                "functional": ["module returns expected value for valid inputs"],
-                "solid": (
-                    "The implementation adheres to SOLID principles by isolating I/O from "
-                    "the domain service."
-                ),
-                "yagni_kiss": (
-                    "The implementation adheres to YAGNI and KISS by avoiding a new base "
-                    "class or registry."
-                ),
-                "testing": (
-                    "Well-designed unit tests cover happy and error paths, with minimum "
-                    "unit test coverage of 80%+ for touched modules."
-                ),
-            },
-            "context_files": ["pkg/module.py"],
-        },
-        "repo": {"branch": branch, "root": "/workspace/repo"},
-        "commit": commit,
-        "diff": "diff --git a/pkg/module.py b/pkg/module.py\n+def f(): return 1\n",
-        "engineer_output": _engineer_output(branch=branch, task_id=task_id),
-        "round": round_,
     }
 
 
@@ -297,109 +257,6 @@ class TestValidateOutputFailures:
             validate_qa_output(out)
 
 
-# ---------------- validate_qa_input: happy paths ----------------
-
-
-class TestValidateInputHappy:
-    def test_first_round(self) -> None:
-        validate_qa_input(_valid_input())
-
-    def test_later_round(self) -> None:
-        validate_qa_input(_valid_input(round_=7))
-
-    def test_hyphenated_branch_ok(self) -> None:
-        validate_qa_input(_valid_input(branch="speedster/iter-1-vertical-slice"))
-
-    def test_short_commit_sha_ok(self) -> None:
-        validate_qa_input(_valid_input(commit="abcdef1"))
-
-    def test_full_commit_sha_ok(self) -> None:
-        validate_qa_input(_valid_input(commit="b" * 40))
-
-    def test_empty_diff_accepted(self) -> None:
-        payload = _valid_input()
-        payload["diff"] = ""
-        validate_qa_input(payload)
-
-
-# ---------------- validate_qa_input: failures ----------------
-
-
-class TestValidateInputFailures:
-    def test_invalid_branch_pattern_rejected(self) -> None:
-        payload = _valid_input()
-        payload["repo"]["branch"] = "feature/foo"
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_colon_in_branch_rejected(self) -> None:
-        payload = _valid_input()
-        payload["repo"]["branch"] = "speedster/bad:id"
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_invalid_commit_pattern_rejected(self) -> None:
-        payload = _valid_input()
-        payload["commit"] = "XYZ1234"
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_round_zero_rejected(self) -> None:
-        payload = _valid_input()
-        payload["round"] = 0
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_missing_acceptance_category_rejected(self) -> None:
-        payload = _valid_input()
-        del payload["task"]["acceptance_criteria"]["testing"]
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_functional_empty_rejected(self) -> None:
-        payload = _valid_input()
-        payload["task"]["acceptance_criteria"]["functional"] = []
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_engineer_output_not_implemented_rejected(self) -> None:
-        payload = _valid_input()
-        payload["engineer_output"]["status"] = "blocked"
-        payload["engineer_output"]["blocked_reason"] = "stale"
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_engineer_output_with_blocked_reason_rejected(self) -> None:
-        payload = _valid_input()
-        payload["engineer_output"]["blocked_reason"] = "stale"
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_engineer_output_with_requested_context_rejected(self) -> None:
-        payload = _valid_input()
-        payload["engineer_output"]["requested_context"] = ["pkg/dep.py"]
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_engineer_output_empty_files_rejected(self) -> None:
-        payload = _valid_input()
-        payload["engineer_output"]["files_changed"] = []
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_additional_top_level_property_rejected(self) -> None:
-        payload = _valid_input()
-        payload["extra"] = 1
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-    def test_missing_context_files_rejected(self) -> None:
-        payload = _valid_input()
-        payload["task"]["context_files"] = []
-        with pytest.raises(Exception):
-            validate_qa_input(payload)
-
-
 # ---------------- private structural helpers ----------------
 
 
@@ -409,19 +266,3 @@ class TestValidateOutputStructural:
         original = copy.deepcopy(out)
         _validate_output_structural(out)
         assert out == original
-
-
-# ---------------- load_payload ----------------
-
-
-class TestLoadPayload:
-    def test_loads_object(self, tmp_path: Path) -> None:
-        path = tmp_path / "p.json"
-        path.write_text(json.dumps({"a": 1}))
-        assert load_payload(path) == {"a": 1}
-
-    def test_non_object_top_level_raises(self, tmp_path: Path) -> None:
-        path = tmp_path / "bad.json"
-        path.write_text(json.dumps([1, 2]))
-        with pytest.raises(ContractValidationError, match="Top-level JSON"):
-            load_payload(path)

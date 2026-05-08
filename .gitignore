@@ -208,3 +208,6 @@ __marimo__/
 
 # Setup state
 .setup_state
+
+# Runtime state
+state/events.csv

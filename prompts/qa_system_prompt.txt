@@ -14,7 +14,7 @@ Context source of truth:
 - Do not approve based on missing evidence. Absence of a test is evidence of absence for the testing criterion.
 
 Input contract:
-The input payload is validated by `schemas/qa_input.schema.json` (enforced by `tools/qa_contract.validate_qa_input`). You will receive exactly one object of the form:
+You will receive exactly one object of the form:
 {
   "task": { ...one task node from the EM breakdown tree, with full acceptance_criteria... },
   "repo": {

@@ -14,9 +14,6 @@ class AgentConfig:
     model: str = field(default_factory=lambda: os.getenv("MODEL", "vllm/default"))
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8080")))
-    tools_config: str = field(
-        default_factory=lambda: os.getenv("TOOLS_CONFIG", "/etc/opencode/tools/em.yaml")
-    )
     git_ssh_key: str = field(
         default_factory=lambda: os.getenv("GIT_SSH_KEY", "")
     )

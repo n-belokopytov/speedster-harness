@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import copy
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,10 +12,25 @@ from speedster.contracts.em_breakdown import (
     _iter_tasks,
     _validate_graph,
     _validate_structural,
-    load_breakdown,
-    normalize_breakdown,
     validate_breakdown,
 )
+
+
+def _normalize(breakdown: dict) -> dict:
+    """Normalize a breakdown tree: sort children by id, dedup lists."""
+    out = json.loads(json.dumps(breakdown))
+
+    def _norm(node: dict) -> None:
+        node["depends_on"] = sorted(dict.fromkeys(node.get("depends_on", []) or []))
+        node["context_files"] = sorted(dict.fromkeys(node.get("context_files", []) or []))
+        children = node.get("tasks") or []
+        for child in children:
+            _norm(child)
+        children.sort(key=lambda c: c["id"])
+        node["tasks"] = children
+
+    _norm(out)
+    return out
 
 
 def _task(
@@ -71,51 +84,12 @@ class TestIterTasks:
         assert [t["id"] for t in _iter_tasks(root)] == ["a", "b", "c", "c-1"]
 
 
-# ---------------- normalize_breakdown ----------------
-
-
-class TestNormalizeBreakdown:
-    def test_sorts_children_by_id(self) -> None:
-        root = _task("root", children=[_task("b"), _task("a")])
-        out = normalize_breakdown(root)
-        assert [c["id"] for c in out["tasks"]] == ["a", "b"]
-
-    def test_sorts_children_recursively(self) -> None:
-        root = _task(
-            "root",
-            children=[_task("outer", children=[_task("y"), _task("x")])],
-        )
-        out = normalize_breakdown(root)
-        assert [c["id"] for c in out["tasks"][0]["tasks"]] == ["x", "y"]
-
-    def test_dedupes_and_sorts_lists_on_every_node(self) -> None:
-        child = _task(
-            "child",
-            depends_on=["root", "root"],
-            context_files=["b.py", "a.py", "b.py"],
-        )
-        root = _task("root", children=[child])
-        out = normalize_breakdown(root)
-        assert out["tasks"][0]["context_files"] == ["a.py", "b.py"]
-        assert out["tasks"][0]["depends_on"] == ["root"]
-
-    def test_does_not_mutate_input(self) -> None:
-        root = _task("root", children=[_task("b"), _task("a")])
-        original = copy.deepcopy(root)
-        _ = normalize_breakdown(root)
-        assert root == original
-
-    def test_rejects_non_object_top_level(self) -> None:
-        with pytest.raises(BreakdownValidationError, match="object"):
-            normalize_breakdown([])  # type: ignore[arg-type]
-
-
 # ---------------- validate_breakdown ----------------
 
 
 class TestValidateBreakdown:
     def _valid(self) -> dict:
-        return normalize_breakdown(
+        return _normalize(
             _task(
                 "root",
                 children=[
@@ -135,7 +109,7 @@ class TestValidateBreakdown:
                 _task("mid", children=[_task("leaf-1"), _task("leaf-2", depends_on=["leaf-1"])]),
             ],
         )
-        validate_breakdown(normalize_breakdown(root))
+        validate_breakdown(_normalize(root))
 
     def test_cross_subtree_dependency_allowed(self) -> None:
         """`depends_on` is global; two leaves in different subtrees can depend on each other."""
@@ -146,27 +120,27 @@ class TestValidateBreakdown:
                 _task("sub-b", children=[_task("b-leaf", depends_on=["a-leaf"])]),
             ],
         )
-        validate_breakdown(normalize_breakdown(root))
+        validate_breakdown(_normalize(root))
 
     def test_duplicate_id_fails(self) -> None:
         root = _task("root", children=[_task("dup"), _task("dup")])
         with pytest.raises(BreakdownValidationError, match="Duplicate task ids"):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_duplicate_id_across_levels_fails(self) -> None:
         root = _task("root", children=[_task("root")])
         with pytest.raises(BreakdownValidationError, match="Duplicate task ids"):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_self_dependency_fails(self) -> None:
         root = _task("root", children=[_task("a", depends_on=["a"])])
         with pytest.raises(Exception):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_unknown_dependency_fails(self) -> None:
         root = _task("root", children=[_task("a", depends_on=["ghost"])])
         with pytest.raises(BreakdownValidationError, match="unknown task"):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_cycle_detected(self) -> None:
         root = _task(
@@ -177,7 +151,7 @@ class TestValidateBreakdown:
             ],
         )
         with pytest.raises(BreakdownValidationError, match="Cyclic"):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_invalid_solid_prefix_fails(self) -> None:
         b = self._valid()
@@ -222,7 +196,7 @@ class TestValidateBreakdown:
     def test_colon_in_id_rejected(self) -> None:
         root = _task("root", children=[_task("bad:id")])
         with pytest.raises(Exception):
-            validate_breakdown(normalize_breakdown(root))
+            validate_breakdown(_normalize(root))
 
     def test_missing_tasks_field_on_leaf_fails(self) -> None:
         b = self._valid()
@@ -236,7 +210,7 @@ class TestValidateBreakdown:
 
 class TestValidateStructural:
     def _base(self) -> dict:
-        return normalize_breakdown(
+        return _normalize(
             _task("root", children=[_task("a"), _task("b", depends_on=["a"])])
         )
 
@@ -265,14 +239,14 @@ class TestValidateStructural:
             _validate_structural(b)
 
     def test_duplicate_ids_across_levels(self) -> None:
-        b = normalize_breakdown(_task("root", children=[_task("x", children=[_task("root")])]))
+        b = _normalize(_task("root", children=[_task("x", children=[_task("root")])]))
         with pytest.raises(BreakdownValidationError, match="Duplicate task ids"):
             _validate_structural(b)
 
 
 class TestValidateGraph:
     def _base(self) -> dict:
-        return normalize_breakdown(
+        return _normalize(
             _task("root", children=[_task("a"), _task("b", depends_on=["a"])])
         )
 
@@ -290,7 +264,7 @@ class TestValidateGraph:
                 _task("b", depends_on=["a"]),
             ],
         )
-        b = normalize_breakdown(root)
+        b = _normalize(root)
         with pytest.raises(BreakdownValidationError, match="Cyclic"):
             _validate_graph(b)
 
@@ -302,7 +276,7 @@ class TestValidateGraph:
                 _task("right", children=[_task("r1", depends_on=["l1"])]),
             ],
         )
-        _validate_graph(normalize_breakdown(root))
+        _validate_graph(_normalize(root))
 
     def test_depends_on_descendant_rejected(self) -> None:
         """Parent listing its own descendant in depends_on is redundant with structural edge."""
@@ -311,7 +285,7 @@ class TestValidateGraph:
             depends_on=["child"],
             children=[_task("child")],
         )
-        b = normalize_breakdown(root)
+        b = _normalize(root)
         with pytest.raises(BreakdownValidationError, match="descendant"):
             _validate_graph(b)
 
@@ -321,7 +295,7 @@ class TestValidateGraph:
             depends_on=["grand"],
             children=[_task("child", children=[_task("grand")])],
         )
-        b = normalize_breakdown(root)
+        b = _normalize(root)
         with pytest.raises(BreakdownValidationError, match="descendant"):
             _validate_graph(b)
 
@@ -331,7 +305,7 @@ class TestValidateGraph:
             "root",
             children=[_task("child", depends_on=["root"])],
         )
-        b = normalize_breakdown(root)
+        b = _normalize(root)
         with pytest.raises(BreakdownValidationError, match="ancestor"):
             _validate_graph(b)
 
@@ -349,7 +323,7 @@ class TestValidateGraph:
                 _task("b", children=[_task("b1", depends_on=["a"])]),
             ],
         )
-        b = normalize_breakdown(root)
+        b = _normalize(root)
         with pytest.raises(BreakdownValidationError, match="Cyclic"):
             _validate_graph(b)
 
@@ -357,7 +331,7 @@ class TestValidateGraph:
 class TestBuildRelationships:
     def test_flat_children_have_root_as_ancestor(self) -> None:
         root = _task("root", children=[_task("a"), _task("b")])
-        nodes, descendants, ancestors = _build_relationships(normalize_breakdown(root))
+        nodes, descendants, ancestors = _build_relationships(_normalize(root))
         assert set(nodes) == {"root", "a", "b"}
         assert ancestors["a"] == {"root"}
         assert ancestors["root"] == set()
@@ -368,23 +342,7 @@ class TestBuildRelationships:
         root = _task(
             "root", children=[_task("a", children=[_task("a1", children=[_task("a1x")])])]
         )
-        _, descendants, ancestors = _build_relationships(normalize_breakdown(root))
+        _, descendants, ancestors = _build_relationships(_normalize(root))
         assert ancestors["a1x"] == {"root", "a", "a1"}
         assert descendants["root"] == {"a", "a1", "a1x"}
         assert descendants["a"] == {"a1", "a1x"}
-
-
-# ---------------- load_breakdown ----------------
-
-
-class TestLoadBreakdown:
-    def test_loads_object(self, tmp_path: Path) -> None:
-        path = tmp_path / "b.json"
-        path.write_text(json.dumps({"id": "t"}))
-        assert load_breakdown(path) == {"id": "t"}
-
-    def test_non_object_top_level_raises(self, tmp_path: Path) -> None:
-        path = tmp_path / "bad.json"
-        path.write_text(json.dumps([1, 2]))
-        with pytest.raises(BreakdownValidationError, match="object"):
-            load_breakdown(path)

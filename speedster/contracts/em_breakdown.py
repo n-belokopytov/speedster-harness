@@ -4,13 +4,7 @@ This module is the single source of truth for the derived and deterministic
 parts of the EM breakdown contract referenced by `prompts/em_system_prompt.txt`
 and enforced by `schemas/em_breakdown.schema.json`.
 
-It exposes two responsibilities, intentionally separated per SRP:
-
-- `normalize_breakdown` : stable ordering and canonical field shape.
-- `validate_breakdown`  : schema + structural + graph validation.
-
-The CLIs in `tools/validate_em_breakdown.py` and
-`tools/normalize_em_breakdown.py` wrap these functions.
+`validate_breakdown` performs schema + structural + graph validation.
 
 Model recap:
 - The root JSON value IS a task; a task is `{ id, ..., tasks: [task, ...] }`.
@@ -30,7 +24,6 @@ Model recap:
 
 from __future__ import annotations
 
-import json
 from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
@@ -45,8 +38,6 @@ _YAGNI_KISS_PREFIX = "The implementation adheres to YAGNI and KISS by "
 _TESTING_PREFIX = "Well-designed unit tests cover "
 __all__ = [
     "BreakdownValidationError",
-    "load_breakdown",
-    "normalize_breakdown",
     "validate_breakdown",
 ]
 
@@ -60,30 +51,6 @@ def _iter_tasks(root: dict[str, Any]) -> Iterable[dict[str, Any]]:
         children = node.get("tasks") or []
         for child in reversed(children):
             stack.append(child)
-
-
-def normalize_breakdown(breakdown: dict[str, Any]) -> dict[str, Any]:
-    """Return a normalized copy with stable ordering and deduped lists.
-
-    - Dedupes and sorts `depends_on` and `context_files` on every node.
-    - Sorts each node's `tasks` children by `id` ascending.
-    - Does NOT renumber ids; the EM owns id allocation.
-    """
-    out = json.loads(json.dumps(breakdown))
-    if not isinstance(out, dict):
-        raise BreakdownValidationError("Top-level JSON value must be an object (a task).")
-
-    def _norm(node: dict[str, Any]) -> None:
-        node["depends_on"] = sorted(dict.fromkeys(node.get("depends_on", []) or []))
-        node["context_files"] = sorted(dict.fromkeys(node.get("context_files", []) or []))
-        children = node.get("tasks") or []
-        for child in children:
-            _norm(child)
-        children.sort(key=lambda c: c["id"])
-        node["tasks"] = children
-
-    _norm(out)
-    return out
 
 
 def _validate_structural(breakdown: dict[str, Any]) -> None:
@@ -221,11 +188,3 @@ def validate_breakdown(
     validate_json_schema(breakdown, schema_path or DEFAULT_SCHEMA_PATH)
     _validate_structural(breakdown)
     _validate_graph(breakdown)
-
-
-def load_breakdown(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise BreakdownValidationError("Top-level JSON value must be an object (a task).")
-    return data

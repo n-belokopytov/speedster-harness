@@ -11,7 +11,6 @@ services:
       MODEL: ${MODEL:-vllm/default}
       HOST: 0.0.0.0
       PORT: 8080
-      TOOLS_CONFIG: /app/agent/tools/em.yaml
       REPO_ROOT: /workspace
     ports:
       - "${EM_AGENT_PORT:-8081}:8080"
@@ -38,7 +37,6 @@ services:
       MODEL: ${MODEL:-vllm/default}
       HOST: 0.0.0.0
       PORT: 8080
-      TOOLS_CONFIG: /app/agent/tools/engineer.yaml
       REPO_ROOT: /workspace
       GIT_SSH_KEY: /run/secrets/github_ssh_key
       REPO_URL: ${REPO_URL:-}
@@ -68,7 +66,6 @@ services:
       MODEL: ${MODEL:-vllm/default}
       HOST: 0.0.0.0
       PORT: 8080
-      TOOLS_CONFIG: /app/agent/tools/qa.yaml
       REPO_ROOT: /workspace
     ports:
       - "${QA_AGENT_PORT:-8083}:8080"
